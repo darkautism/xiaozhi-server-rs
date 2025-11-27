@@ -20,7 +20,7 @@ async fn main() {
     // Initialize tracing
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "xiaozhi_server=debug,tower_http=debug".into()),
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "xiaozhi_server=trace,tower_http=debug".into()),
         ))
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -40,11 +40,20 @@ async fn main() {
     };
 
     // Build our application with routes
+    // Configure TraceLayer to include headers and body (if printable)
+    let trace_layer = TraceLayer::new_for_http()
+        .on_request(|request: &axum::extract::Request, _span: &tracing::Span| {
+             tracing::info!("Started request: {} {} {:?}", request.method(), request.uri(), request.headers());
+        })
+        .on_response(|response: &axum::response::Response, latency: std::time::Duration, _span: &tracing::Span| {
+             tracing::info!("Finished request: {:?} in {:?}ms", response.status(), latency.as_millis());
+        });
+
     let app = Router::new()
         .route("/xiaozhi/v1/", get(websocket::handle_websocket))
         .route("/xiaozhi/ota/", get(ota::handle_ota))
         .route("/xiaozhi/ota/activate", post(ota::handle_ota_activate))
-        .layer(TraceLayer::new_for_http())
+        .layer(trace_layer)
         .with_state(app_state.clone());
 
     // Run it

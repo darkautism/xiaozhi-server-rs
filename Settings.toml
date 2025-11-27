@@ -3,7 +3,7 @@ port = 9002
 host = "0.0.0.0"
 
 [auth]
-enable = true
+enable = false
 signature_key = "secret_key_for_hmac"
 
 [ota.external.websocket]
