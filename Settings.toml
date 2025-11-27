@@ -1,0 +1,23 @@
+[server]
+port = 9002
+host = "0.0.0.0"
+
+[auth]
+enable = true
+signature_key = "secret_key_for_hmac"
+
+[ota.external.websocket]
+url = "wss://api.example.com/xiaozhi/v1/"
+token = "external_token"
+
+[ota.external.mqtt]
+enable = true
+endpoint = "ssl://mqtt.example.com:8883"
+
+[ota.test.websocket]
+url = "ws://192.168.1.100:9002/xiaozhi/v1/"
+token = "test_token"
+
+[ota.test.mqtt]
+enable = false
+endpoint = "tcp://192.168.1.100:1883"
