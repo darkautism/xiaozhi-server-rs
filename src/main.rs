@@ -51,7 +51,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/xiaozhi/v1/", get(websocket::handle_websocket))
-        .route("/xiaozhi/ota/", get(ota::handle_ota))
+        .route("/xiaozhi/ota/", post(ota::handle_ota))
         .route("/xiaozhi/ota/activate", post(ota::handle_ota_activate))
         .layer(trace_layer)
         .with_state(app_state.clone());

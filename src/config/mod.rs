@@ -27,6 +27,7 @@ pub struct OtaSettings {
 
 #[derive(Debug, Deserialize)]
 pub struct OtaEnvironment {
+    pub firmware_version: String,
     pub websocket: WebsocketConfig,
     pub mqtt: MqttConfig,
 }

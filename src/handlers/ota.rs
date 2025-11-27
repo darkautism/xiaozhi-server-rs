@@ -108,7 +108,7 @@ pub async fn handle_ota(
         },
         activation: activation_info,
         firmware: FirmwareInfo {
-            version: "0.9.9".to_string(),
+            version: ota_config.firmware_version.clone(),
             url: "".to_string(),
         },
     };
