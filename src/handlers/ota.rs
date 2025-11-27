@@ -27,14 +27,6 @@ pub async fn handle_ota(
         None => return (StatusCode::BAD_REQUEST, "Missing Client-Id").into_response(),
     };
 
-    // Determine IP for config selection
-    let ip = headers.get("X-Real-IP")
-        .and_then(|h| h.to_str().ok())
-        .or_else(|| headers.get("X-Forwarded-For").and_then(|h| h.to_str().ok()))
-        .unwrap_or("127.0.0.1"); // Default to localhost if unknown
-
-    let is_test_env = ip.starts_with("192.168.") || ip.starts_with("10.") || ip.starts_with("127.");
-
     // Auth Check
     let mut activation_info: Option<ActivationInfo> = None;
     if state.config.auth.enable {
@@ -64,18 +56,24 @@ pub async fn handle_ota(
         }
     }
 
-    // Config Selection
-    let ota_config = if is_test_env {
-        &state.config.ota.test
+    let ota_config = &state.config.ota;
+
+    // WebSocket URL construction
+    let websocket_url = if let Some(url) = &ota_config.websocket_url {
+        url.clone()
     } else {
-        &state.config.ota.external
+        // Construct dynamic URL from Host header
+        let host = headers.get("Host")
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("localhost:8002"); // Fallback
+        format!("ws://{}/xiaozhi/v1/", host)
     };
+
+    let websocket_token = ota_config.websocket_token.clone().unwrap_or_default();
 
     // MQTT Info Construction
     let mqtt_info = if ota_config.mqtt.enable {
         // Generate MQTT credentials (mock)
-        // reference: util.GenerateMqttCredentials(deviceId, clientId, ip, signatureKey)
-        // We will just generate a simple one
         let signature_key = &state.config.auth.signature_key;
         let password_raw = format!("{}:{}:{}", device_id, client_id, signature_key);
         // Simple hash for password
@@ -98,8 +96,8 @@ pub async fn handle_ota(
 
     let response = OtaResponse {
         websocket: WebsocketInfo {
-            url: ota_config.websocket.url.clone(),
-            token: ota_config.websocket.token.clone(),
+            url: websocket_url,
+            token: websocket_token,
         },
         mqtt: mqtt_info,
         server_time: ServerTimeInfo {
@@ -131,20 +129,6 @@ pub async fn handle_ota_activate(
     }
 
     let db = state.db.write().unwrap();
-    // Retrieve stored challenge
-    // Note: In real world, we verify the challenge sent back by client matches what we stored (if client sends it back)
-    // Or we verify the signature using the stored challenge.
-    // The request payload usually contains the signature of the challenge.
-
-    // We need to know what the client signed.
-    // Usually: HMAC(secret, challenge)
-    // But here, the server gave the challenge. The client needs to sign it with a SHARED SECRET or use the challenge as a key?
-    // Wait, usually OTA activation implies the device PROVES it's a valid device.
-    // If we assume the device has a secret burned in, we verify against that.
-
-    // However, without knowing the exact protocol, I will assume a standard HMAC verification:
-    // Signature = HMAC-SHA256(Key=SharedSecret, Data=Challenge)
-    // We use the same 'signature_key' from config as the shared secret for simplicity.
 
     // Find the challenge we issued for this device
     let stored_challenge = match db.get_challenge(&device_id) {
@@ -160,16 +144,12 @@ pub async fn handle_ota_activate(
     let expected_signature_bytes = mac.finalize().into_bytes();
     let expected_signature = hex::encode(expected_signature_bytes);
 
-    // Constant time comparison is better for security, but string eq is fine for this prototype
     if signature_to_verify == expected_signature {
         drop(db); // release read lock (actually we have write lock, so we can update)
         let mut db = state.db.write().unwrap();
         db.activate_device(device_id);
         (StatusCode::OK, "Activation successful").into_response()
     } else {
-        // Fallback: Check if the client signed the DeviceId + Challenge?
-        // Or maybe just signed the deviceID?
-        // For strictness, if it fails, we fail.
         tracing::warn!("Signature mismatch. Expected: {}, Got: {}", expected_signature, signature_to_verify);
         (StatusCode::ACCEPTED, "Device verification failed").into_response()
     }

@@ -6,24 +6,16 @@ host = "0.0.0.0"
 enable = false
 signature_key = "secret_key_for_hmac"
 
-[ota.external]
+[ota]
 firmware_version = "0.9.9"
 
-[ota.external.websocket]
-url = "wss://api.example.com/xiaozhi/v1/"
-token = "external_token"
+# Optional: Override the WebSocket URL.
+# If not set, the server will construct it using the request's Host header: ws://{host}/xiaozhi/v1/
+# websocket_url = "wss://custom.example.com/xiaozhi/v1/"
 
-[ota.external.mqtt]
+# Optional: Token to be included in the WebSocket handshake response.
+# websocket_token = "some_token"
+
+[ota.mqtt]
 enable = true
 endpoint = "ssl://mqtt.example.com:8883"
-
-[ota.test]
-firmware_version = "0.9.9"
-
-[ota.test.websocket]
-url = "ws://192.168.1.100:9002/xiaozhi/v1/"
-token = "test_token"
-
-[ota.test.mqtt]
-enable = false
-endpoint = "tcp://192.168.1.100:1883"

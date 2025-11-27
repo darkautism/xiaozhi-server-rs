@@ -21,21 +21,10 @@ pub struct AuthSettings {
 
 #[derive(Debug, Deserialize)]
 pub struct OtaSettings {
-    pub external: OtaEnvironment,
-    pub test: OtaEnvironment,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OtaEnvironment {
     pub firmware_version: String,
-    pub websocket: WebsocketConfig,
+    pub websocket_url: Option<String>,
+    pub websocket_token: Option<String>,
     pub mqtt: MqttConfig,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct WebsocketConfig {
-    pub url: String,
-    pub token: String,
 }
 
 #[derive(Debug, Deserialize)]
