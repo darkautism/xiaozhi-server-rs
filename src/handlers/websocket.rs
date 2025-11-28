@@ -1,21 +1,17 @@
 use axum::{
     extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State, ConnectInfo},
+    http::HeaderMap,
     response::IntoResponse,
 };
 use std::net::SocketAddr;
 use futures_util::{stream::StreamExt, SinkExt};
 use serde_json::Value;
-use tracing::{info, warn, error};
+use tracing::{info, warn, error, debug};
 
 use crate::state::AppState;
 use crate::handlers::ota_types::*; // Re-using types if needed or define new ones
 
 // Re-using the message structs from the original main.rs
-// Ideally these should be moved to a shared types file, but for now I'll include them here
-// or define them in a dedicated types file.
-// Since I already have `ota_types.rs`, I will create `websocket_types.rs` or just put them here for now.
-// To keep it clean, let's put them here as they are specific to the WS protocol.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -73,14 +69,19 @@ pub enum ServerMessage {
 
 pub async fn handle_websocket(
     ws: WebSocketUpgrade,
+    headers: HeaderMap,
     State(_state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
-    info!("New WebSocket connection from {}", addr);
+    // Log detailed connection attempt info at INFO level so it's visible by default
+    info!("WebSocket handshake attempt from {}", addr);
+    debug!("WebSocket handshake headers: {:?}", headers);
+
     ws.on_upgrade(move |socket| handle_socket(socket, addr))
 }
 
 async fn handle_socket(mut socket: WebSocket, addr: SocketAddr) {
+    info!("WebSocket connection established with {}", addr);
     while let Some(msg) = socket.recv().await {
         let msg = match msg {
             Ok(msg) => msg,
@@ -98,6 +99,7 @@ async fn handle_socket(mut socket: WebSocket, addr: SocketAddr) {
                          // Simple echo/hello response logic from original code
                          match client_message {
                              ClientMessage::Hello { .. } => {
+                                 info!("Processing Hello message from {}", addr);
                                  let response = ServerMessage::Hello {
                                      transport: "websocket".to_string(),
                                      audio_params: Some(AudioParamsResponse { sample_rate: 16000 }),
@@ -107,6 +109,7 @@ async fn handle_socket(mut socket: WebSocket, addr: SocketAddr) {
                                      error!("Failed to send hello response: {}", e);
                                      break;
                                  }
+                                 info!("Sent Hello response to {}", addr);
                              },
                              _ => {
                                  info!("Unhandled message type: {:?}", client_message);

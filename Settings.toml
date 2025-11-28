@@ -17,5 +17,5 @@ firmware_version = "0.9.9"
 # websocket_token = "some_token"
 
 [ota.mqtt]
-enable = true
+enable = false
 endpoint = "ssl://mqtt.example.com:8883"

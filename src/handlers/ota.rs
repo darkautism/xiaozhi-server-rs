@@ -112,6 +112,9 @@ pub async fn handle_ota(
         },
     };
 
+    // Log the response payload for debugging
+    tracing::debug!("OTA response for device {}: {:?}", device_id, response);
+
     Json(response).into_response()
 }
 
