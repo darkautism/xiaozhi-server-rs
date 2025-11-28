@@ -103,6 +103,7 @@ pub async fn handle_ota(
         server_time: ServerTimeInfo {
             timestamp: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as i64,
             timezone_offset: 480, // UTC+8
+            time_zone: "Asia/Shanghai".to_string(),
         },
         activation: activation_info,
         firmware: FirmwareInfo {
