@@ -1,0 +1,21 @@
+[server]
+port = 8002
+host = "0.0.0.0"
+
+[auth]
+enable = false
+signature_key = "secret_key_for_hmac"
+
+[ota]
+firmware_version = "0.9.9"
+
+# Optional: Override the WebSocket URL.
+# If not set, the server will construct it using the request's Host header: ws://{host}/xiaozhi/v1/
+# websocket_url = "wss://custom.example.com/xiaozhi/v1/"
+
+# Optional: Token to be included in the WebSocket handshake response.
+# websocket_token = "some_token"
+
+[ota.mqtt]
+enable = false
+endpoint = "ssl://mqtt.example.com:8883"
