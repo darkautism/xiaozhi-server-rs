@@ -5,6 +5,11 @@ pub struct ServerConfig {
     pub server: ServerSettings,
     pub auth: AuthSettings,
     pub ota: OtaSettings,
+    pub llm: LlmSettings,
+    pub stt: SttSettings,
+    pub tts: TtsSettings,
+    #[serde(default)]
+    pub db: DbSettings,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +36,36 @@ pub struct OtaSettings {
 pub struct MqttConfig {
     pub enable: bool,
     pub endpoint: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LlmSettings {
+    pub provider: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SttSettings {
+    pub provider: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TtsSettings {
+    pub provider: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DbSettings {
+    #[serde(rename = "type")]
+    pub db_type: String,
+}
+
+impl Default for DbSettings {
+    fn default() -> Self {
+        Self {
+            db_type: "memory".to_string(),
+        }
+    }
 }
 
 impl ServerConfig {

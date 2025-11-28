@@ -1,52 +1,40 @@
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
-use std::time::{SystemTime, Duration};
+use std::sync::Arc;
 use crate::config::ServerConfig;
+use crate::traits::{LlmTrait, SttTrait, TtsTrait, DbTrait};
+use crate::services::{
+    llm::gemini::GeminiLlm,
+    stt::local::LocalStt,
+    tts::local::LocalTts,
+    db::{memory::InMemoryDb, sql::SqlDb},
+};
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<ServerConfig>,
-    pub db: Arc<RwLock<InMemoryDb>>,
+    pub db: Arc<dyn DbTrait + Send + Sync>,
+    pub llm: Arc<dyn LlmTrait + Send + Sync>,
+    pub stt: Arc<dyn SttTrait + Send + Sync>,
+    pub tts: Arc<dyn TtsTrait + Send + Sync>,
 }
 
-pub struct InMemoryDb {
-    pub activated_devices: HashSet<String>, // DeviceId
-    pub pending_challenges: HashMap<String, (String, SystemTime)>, // DeviceId -> (Challenge, Expiry)
-}
+impl AppState {
+    pub fn new(config: ServerConfig) -> Self {
+        let db: Arc<dyn DbTrait + Send + Sync> = match config.db.db_type.as_str() {
+            "sql" => Arc::new(SqlDb::new()),
+            _ => Arc::new(InMemoryDb::new()),
+        };
 
-impl InMemoryDb {
-    pub fn new() -> Self {
+        // In a real app, we'd switch based on config.llm.provider, etc.
+        let llm = Arc::new(GeminiLlm::new(config.llm.api_key.clone()));
+        let stt = Arc::new(LocalStt::new());
+        let tts = Arc::new(LocalTts::new());
+
         Self {
-            activated_devices: HashSet::new(),
-            pending_challenges: HashMap::new(),
+            config: Arc::new(config),
+            db,
+            llm,
+            stt,
+            tts,
         }
-    }
-
-    pub fn is_activated(&self, device_id: &str) -> bool {
-        self.activated_devices.contains(device_id)
-    }
-
-    pub fn add_challenge(&mut self, device_id: String, challenge: String, ttl: Duration) {
-        self.pending_challenges.insert(device_id, (challenge, SystemTime::now() + ttl));
-    }
-
-    pub fn get_challenge(&self, device_id: &str) -> Option<String> {
-        if let Some((challenge, expiry)) = self.pending_challenges.get(device_id) {
-            if SystemTime::now() < *expiry {
-                return Some(challenge.clone());
-            }
-        }
-        None
-    }
-
-    pub fn activate_device(&mut self, device_id: String) {
-        self.activated_devices.insert(device_id.clone());
-        self.pending_challenges.remove(&self.device_id_key(&device_id));
-    }
-
-    // Helper to allow finding by ref
-    fn device_id_key(&self, _id: &str) -> String {
-        // Just return the id itself, mainly to match types
-        _id.to_string()
     }
 }
