@@ -1,0 +1,44 @@
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+pub struct ServerConfig {
+    pub server: ServerSettings,
+    pub auth: AuthSettings,
+    pub ota: OtaSettings,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ServerSettings {
+    pub port: u16,
+    pub host: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuthSettings {
+    pub enable: bool,
+    pub signature_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OtaSettings {
+    pub firmware_version: String,
+    pub websocket_url: Option<String>,
+    pub websocket_token: Option<String>,
+    pub mqtt: MqttConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MqttConfig {
+    pub enable: bool,
+    pub endpoint: String,
+}
+
+impl ServerConfig {
+    pub fn new() -> Result<Self, config::ConfigError> {
+        let builder = config::Config::builder()
+            .add_source(config::File::with_name("Settings.toml").required(false))
+            .add_source(config::Environment::with_prefix("XIAOZHI").separator("__"));
+
+        builder.build()?.try_deserialize()
+    }
+}
