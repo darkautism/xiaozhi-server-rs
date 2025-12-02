@@ -3,6 +3,9 @@ name = "xiaozhi_server"
 version = "0.1.0"
 edition = "2021"
 
+[patch.crates-io]
+cmake = { git = "https://github.com/reflectronic/cmake-rs.git", branch = "vs-18" }
+
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
 config = "0.15"
@@ -20,6 +23,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 rand = { version = "0.9", features = ["std_rng"] }
 chrono = "0.4"
+anyhow = "1.0.100"
+async-trait = "0.1.89"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+sensevoice-rs = "0.1.4"
+opus = { git = "https://github.com/darkautism/opus-rs", version = "0.3.0" }
+sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio", "macros"] }
+voice_activity_detector = "0.2.1"
 
 [dev-dependencies]
-reqwest = { version = "0.12", features = ["json"] }

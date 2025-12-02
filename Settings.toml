@@ -19,3 +19,18 @@ firmware_version = "0.9.9"
 [ota.mqtt]
 enable = false
 endpoint = "ssl://mqtt.example.com:8883"
+
+[llm]
+provider = "gemini"
+api_key = "Key"
+model = "gemini-2.5-flash-lite"
+
+[stt]
+provider = "local" # options: local, etc
+
+[tts]
+provider = "local" # options: local, etc
+
+[db]
+type = "memory" # options: memory, sql
+# url = "sqlite://xiaozhi.db" # Required if type = "sql"
