@@ -22,8 +22,8 @@ endpoint = "ssl://mqtt.example.com:8883"
 
 [llm]
 provider = "gemini"
-api_key = "YOUR_GEMINI_KEY"
-model = "gemini-3-pro-preview"
+api_key = "Key"
+model = "gemini-2.5-flash-lite"
 
 [stt]
 provider = "local" # options: local, etc
