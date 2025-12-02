@@ -13,7 +13,7 @@ impl OpusTts {
 
 #[async_trait]
 impl TtsTrait for OpusTts {
-    async fn speak(&self, text: &str) -> anyhow::Result<Vec<u8>> {
+    async fn speak(&self, text: &str) -> anyhow::Result<Vec<Vec<u8>>> {
         info!("Generating TTS for: '{}' (Mocking PCM -> Opus)", text);
 
         // 1. Generate Dummy PCM (Sine wave beep)
@@ -32,7 +32,7 @@ impl TtsTrait for OpusTts {
 
         // 2. Encode to Opus
         let mut encoder = OpusService::new_encoder()?;
-        let mut opus_bytes = Vec::new();
+        let mut frames = Vec::new();
 
         // Opus usually expects frames of 2.5, 5, 10, 20, 40, or 60 ms.
         // At 16k, 60ms = 960 samples.
@@ -40,20 +40,18 @@ impl TtsTrait for OpusTts {
 
         for chunk in pcm.chunks(frame_size) {
             if chunk.len() < frame_size {
-                // Pad with silence if needed, or just skip partial
                  let mut padded = chunk.to_vec();
                  padded.resize(frame_size, 0);
-                 let encoded = encoder.encode_vec(&padded, frame_size * 2)?; // Alloc enough space? encode_vec handles it?
-                 // opus crate `encode_vec` takes input and max_output_size?
-                 // Actually `encode_vec` signature: `pub fn encode_vec(&mut self, input: &[i16], max_data_bytes: usize) -> Result<Vec<u8>>`
-                 opus_bytes.extend_from_slice(&encoded);
+                 let encoded = encoder.encode_vec(&padded, frame_size * 2)?;
+                 frames.push(encoded);
             } else {
                  let encoded = encoder.encode_vec(chunk, frame_size * 2)?;
-                 opus_bytes.extend_from_slice(&encoded);
+                 frames.push(encoded);
             }
         }
 
-        info!("Generated {} bytes of Opus audio.", opus_bytes.len());
-        Ok(opus_bytes)
+        let total_bytes: usize = frames.iter().map(|f| f.len()).sum();
+        info!("Generated {} bytes of Opus audio.", total_bytes);
+        Ok(frames)
     }
 }
