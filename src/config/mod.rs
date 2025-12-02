@@ -44,10 +44,17 @@ pub struct LlmSettings {
     pub api_key: String,
     #[serde(default = "default_llm_model")]
     pub model: String,
+    #[serde(default = "default_history_limit")]
+    pub history_limit: usize,
+    pub system_instruction: Option<String>,
 }
 
 fn default_llm_model() -> String {
     "gemini-3-pro-preview".to_string()
+}
+
+fn default_history_limit() -> usize {
+    5
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +65,25 @@ pub struct SttSettings {
 #[derive(Debug, Deserialize)]
 pub struct TtsSettings {
     pub provider: String,
+    #[serde(default)]
+    pub gemini: Option<GeminiTtsConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GeminiTtsConfig {
+    pub api_key: Option<String>,
+    #[serde(default = "default_tts_model")]
+    pub model: String,
+    #[serde(default = "default_tts_voice")]
+    pub voice_name: String,
+}
+
+fn default_tts_model() -> String {
+    "gemini-2.5-flash-preview-tts".to_string()
+}
+
+fn default_tts_voice() -> String {
+    "Kore".to_string()
 }
 
 #[derive(Debug, Deserialize)]

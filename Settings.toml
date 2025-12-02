@@ -9,13 +9,6 @@ signature_key = "secret_key_for_hmac"
 [ota]
 firmware_version = "0.9.9"
 
-# Optional: Override the WebSocket URL.
-# If not set, the server will construct it using the request's Host header: ws://{host}/xiaozhi/v1/
-# websocket_url = "wss://custom.example.com/xiaozhi/v1/"
-
-# Optional: Token to be included in the WebSocket handshake response.
-# websocket_token = "some_token"
-
 [ota.mqtt]
 enable = false
 endpoint = "ssl://mqtt.example.com:8883"
@@ -23,14 +16,21 @@ endpoint = "ssl://mqtt.example.com:8883"
 [llm]
 provider = "gemini"
 api_key = "Key"
-model = "gemini-2.5-flash-lite"
+model = "gemini-2.0-flash-lite"
+history_limit = 5
+system_instruction = "你是一個智慧音箱，回復以繁體中文為主，避免過長思考與長篇大論，且避免類似書面語、論文、文檔形式的發言。請用類似人類的隨意語法發言"
 
 [stt]
-provider = "local" # options: local, etc
+provider = "local"
 
 [tts]
-provider = "local" # options: local, etc
+provider = "gemini"
+
+[tts.gemini]
+# api_key = "Optional if different from llm"
+model = "gemini-2.5-flash-preview-tts"
+voice_name = "Kore"
 
 [db]
-type = "memory" # options: memory, sql
-# url = "sqlite://xiaozhi.db" # Required if type = "sql"
+type = "memory"
+# url = "sqlite://xiaozhi.db"

@@ -1,7 +1,7 @@
-use crate::traits::DbTrait;
+use crate::traits::{DbTrait, Message};
 use async_trait::async_trait;
 use sqlx::sqlite::SqlitePool;
-use sqlx::{Pool, Sqlite};
+use sqlx::{Pool, Sqlite, Row};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct SqlDb {
@@ -28,6 +28,14 @@ impl SqlDb {
                 challenge TEXT NOT NULL,
                 expiry INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_history_device_id ON chat_history(device_id);
             "#
         )
         .execute(&self.pool)
@@ -87,9 +95,6 @@ impl DbTrait for SqlDb {
             .unwrap()
             .as_secs() as i64;
 
-        // Clean expired
-        // Actually, we can check expiry in the SELECT
-
         let result: Option<(String, i64)> = sqlx::query_as(
             "SELECT challenge, expiry FROM challenges WHERE device_id = ?"
         )
@@ -101,7 +106,6 @@ impl DbTrait for SqlDb {
             if now < expiry {
                 return Ok(Some(challenge));
             } else {
-                // Optionally cleanup
                 let _ = sqlx::query("DELETE FROM challenges WHERE device_id = ?")
                     .bind(device_id)
                     .execute(&self.pool)
@@ -109,5 +113,53 @@ impl DbTrait for SqlDb {
             }
         }
         Ok(None)
+    }
+
+    async fn add_chat_history(&self, device_id: &str, role: &str, content: &str) -> anyhow::Result<()> {
+        let created_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        sqlx::query(
+            "INSERT INTO chat_history (device_id, role, content, created_at) VALUES (?, ?, ?, ?)"
+        )
+        .bind(device_id)
+        .bind(role)
+        .bind(content)
+        .bind(created_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn get_chat_history(&self, device_id: &str, limit: usize) -> anyhow::Result<Vec<Message>> {
+        // Fetch recent messages. Since we need them in chronological order,
+        // we sort by created_at DESC, limit, then reverse.
+        // Or using subquery.
+        let rows = sqlx::query(
+            r#"
+            SELECT role, content FROM (
+                SELECT role, content, created_at
+                FROM chat_history
+                WHERE device_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+            ) ORDER BY created_at ASC, id ASC
+            "#
+        )
+        .bind(device_id)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut messages = Vec::new();
+        for row in rows {
+            messages.push(Message {
+                role: row.get("role"),
+                content: row.get("content"),
+            });
+        }
+        Ok(messages)
     }
 }
