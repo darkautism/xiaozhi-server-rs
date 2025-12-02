@@ -52,7 +52,7 @@ impl GeminiTts {
 
 #[async_trait]
 impl TtsTrait for GeminiTts {
-    async fn speak(&self, text: &str) -> anyhow::Result<Vec<u8>> {
+    async fn speak(&self, text: &str) -> anyhow::Result<Vec<Vec<u8>>> {
         info!("Generating Gemini TTS for: '{}' using voice '{}'", text, self.voice_name);
 
         let url = format!(
@@ -122,16 +122,10 @@ impl TtsTrait for GeminiTts {
         // We will chunk the PCM data into 960-sample chunks and encode each.
 
         let mut encoder = OpusService::new_encoder()?;
-        let mut opus_bytes = Vec::new();
+        let mut frames = Vec::new();
         let frame_size = 960; // 60ms
 
         for chunk in resampled_pcm.chunks(frame_size) {
-            // Opus encoder usually requires exactly frame_size samples unless we pad.
-            // But `encode_vec` implementation in `opus` crate:
-            // "If input is smaller than frame_size, it will be padded with zeros? No, it returns error."
-            // Actually, we must check the crate behavior or pad ourselves.
-            // Let's pad with silence.
-
             let encoded = if chunk.len() < frame_size {
                 let mut padded = chunk.to_vec();
                 padded.resize(frame_size, 0);
@@ -139,10 +133,11 @@ impl TtsTrait for GeminiTts {
             } else {
                 encoder.encode_vec(chunk, frame_size * 2)?
             };
-            opus_bytes.extend_from_slice(&encoded);
+            frames.push(encoded);
         }
 
-        info!("Encoded {} bytes of Opus audio.", opus_bytes.len());
-        Ok(opus_bytes)
+        let total_bytes: usize = frames.iter().map(|f| f.len()).sum();
+        info!("Encoded {} bytes of Opus audio into {} frames.", total_bytes, frames.len());
+        Ok(frames)
     }
 }

@@ -22,8 +22,8 @@ pub trait SttTrait: Send + Sync {
 
 #[async_trait]
 pub trait TtsTrait: Send + Sync {
-    // Returns Opus encoded bytes
-    async fn speak(&self, text: &str) -> anyhow::Result<Vec<u8>>;
+    // Returns a list of Opus encoded frames (each frame is a Vec<u8>)
+    async fn speak(&self, text: &str) -> anyhow::Result<Vec<Vec<u8>>>;
 }
 
 #[async_trait]

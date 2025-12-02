@@ -99,20 +99,6 @@ pub async fn handle_websocket(
     debug!("WebSocket handshake headers: {:?}", headers);
 
     // Extract Device ID if possible, otherwise use a default or session-based one
-    // For now, we will try to get it from headers or query params?
-    // The previous implementation didn't seem to extract it explicitly in the handshake,
-    // but maybe the client sends it in `Hello` or `Listen`?
-    // `ClientMessage::Hello` doesn't have device_id.
-    // Let's assume the client IP or a generated session ID is the key for now,
-    // OR we can rely on `session_id` from `Listen`.
-    // BUT history should be persistent for a "Device".
-    // xiaozhi usually sends `Authorization: Bearer <token>` or similar.
-    // If not, we might use a dummy device_id or IP.
-    // Let's use "default_device" if not found, or maybe the path?
-    // Let's rely on the `handle_socket` to manage this logic if needed.
-    // However, `handle_socket` needs to know the device_id to fetch history.
-
-    // For this task, let's assume a single device or extract from header if available.
     let device_id = headers.get("x-device-id")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("unknown_device")
@@ -180,8 +166,13 @@ async fn trigger_pipeline(
                      let _ = tx.send(Message::Text(serde_json::to_string(&tts_start).unwrap().into())).await;
 
                      match state.tts.speak(&response_text).await {
-                         Ok(audio_bytes) => {
-                             let _ = tx.send(Message::Binary(audio_bytes.into())).await;
+                         Ok(frames) => {
+                             // Send frames individually
+                             for frame in frames {
+                                 let _ = tx.send(Message::Binary(frame.into())).await;
+                                 // Optional: small delay if needed, but WebSocket over TCP should handle flow control.
+                                 // tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                             }
                          }
                          Err(e) => error!("TTS Error: {}", e),
                      }
@@ -207,16 +198,6 @@ async fn handle_socket(mut socket: WebSocket, addr: SocketAddr, state: AppState,
     let mut is_listening = false;
     let mut pcm_buffer: Vec<u8> = Vec::new();
 
-    // Load history limit from config (passed via State or we need to access config)
-    // Currently `state` has `config`? No, `state` usually has services.
-    // Let's assume `AppState` struct (which we can't see fully here but inferred) might not have config directly accessible easily
-    // OR we should have added `history_limit` to `AppState` or `LlmService`.
-    // But `LlmTrait` doesn't expose it.
-    // Let's default to 5 if we can't get it, or access it if `state.config` exists.
-    // I'll check `src/state/mod.rs` later. For now, hardcode or try to find a way.
-    // Actually, I can add `history_limit` to `AppState` in `main.rs`.
-    // Let's assume `state.history_limit` exists (I will add it).
-
     // VAD State
     let mut vad = VoiceActivityDetector::builder()
         .sample_rate(16000)
@@ -239,7 +220,7 @@ async fn handle_socket(mut socket: WebSocket, addr: SocketAddr, state: AppState,
     };
 
     let (mut sender, mut receiver) = socket.split();
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(32);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(128); // Increased buffer size
 
     let mut writer_handle = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
