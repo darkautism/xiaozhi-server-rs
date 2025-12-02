@@ -30,5 +30,6 @@ sensevoice-rs = "0.1.4"
 opus = { git = "https://github.com/darkautism/opus-rs", version = "0.3.0" }
 sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio", "macros"] }
 voice_activity_detector = "0.2.1"
+base64 = "0.22.1"
 
 [dev-dependencies]

@@ -1,9 +1,15 @@
 use async_trait::async_trait;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role: String, // "user" or "model"
+    pub content: String,
+}
 
 #[async_trait]
 pub trait LlmTrait: Send + Sync {
-    async fn chat(&self, text: &str) -> anyhow::Result<String>;
+    async fn chat(&self, messages: Vec<Message>) -> anyhow::Result<String>;
 }
 
 #[async_trait]
@@ -26,4 +32,7 @@ pub trait DbTrait: Send + Sync {
     async fn activate_device(&self, device_id: &str) -> anyhow::Result<()>;
     async fn add_challenge(&self, device_id: &str, challenge: &str, ttl_secs: u64) -> anyhow::Result<()>;
     async fn get_challenge(&self, device_id: &str) -> anyhow::Result<Option<String>>;
+
+    async fn add_chat_history(&self, device_id: &str, role: &str, content: &str) -> anyhow::Result<()>;
+    async fn get_chat_history(&self, device_id: &str, limit: usize) -> anyhow::Result<Vec<Message>>;
 }

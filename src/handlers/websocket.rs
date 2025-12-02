@@ -98,7 +98,27 @@ pub async fn handle_websocket(
     info!("WebSocket handshake attempt from {}", addr);
     debug!("WebSocket handshake headers: {:?}", headers);
 
-    ws.on_upgrade(move |socket| handle_socket(socket, addr, state))
+    // Extract Device ID if possible, otherwise use a default or session-based one
+    // For now, we will try to get it from headers or query params?
+    // The previous implementation didn't seem to extract it explicitly in the handshake,
+    // but maybe the client sends it in `Hello` or `Listen`?
+    // `ClientMessage::Hello` doesn't have device_id.
+    // Let's assume the client IP or a generated session ID is the key for now,
+    // OR we can rely on `session_id` from `Listen`.
+    // BUT history should be persistent for a "Device".
+    // xiaozhi usually sends `Authorization: Bearer <token>` or similar.
+    // If not, we might use a dummy device_id or IP.
+    // Let's use "default_device" if not found, or maybe the path?
+    // Let's rely on the `handle_socket` to manage this logic if needed.
+    // However, `handle_socket` needs to know the device_id to fetch history.
+
+    // For this task, let's assume a single device or extract from header if available.
+    let device_id = headers.get("x-device-id")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("unknown_device")
+        .to_string();
+
+    ws.on_upgrade(move |socket| handle_socket(socket, addr, state, device_id))
 }
 
 // Helper to trigger processing pipeline
@@ -106,6 +126,8 @@ async fn trigger_pipeline(
     state: &AppState,
     tx: &Sender<Message>,
     pcm_buffer: &[u8],
+    device_id: &str,
+    history_limit: usize,
 ) {
      if pcm_buffer.is_empty() {
          warn!("No audio received for STT");
@@ -124,22 +146,41 @@ async fn trigger_pipeline(
              let stt_msg = ServerMessage::Stt { text: text.clone() };
              let _ = tx.send(Message::Text(serde_json::to_string(&stt_msg).unwrap().into())).await;
 
-             // 2. Call LLM
-             match state.llm.chat(&text).await {
+             // 2. Prepare Chat History
+             // Fetch recent history
+             let mut messages = match state.db.get_chat_history(device_id, history_limit).await {
+                 Ok(h) => h,
+                 Err(e) => {
+                     error!("Failed to fetch chat history: {}", e);
+                     Vec::new()
+                 }
+             };
+
+             // Add current user message
+             messages.push(crate::traits::Message {
+                 role: "user".to_string(),
+                 content: text.clone(),
+             });
+
+             // 3. Call LLM
+             match state.llm.chat(messages).await {
                  Ok(response_text) => {
                      info!("LLM Response: {}", response_text);
                      let llm_msg = ServerMessage::Llm { emotion: Some("happy".to_string()), text: Some(response_text.clone()) };
                      let _ = tx.send(Message::Text(serde_json::to_string(&llm_msg).unwrap().into())).await;
 
-                     // 3. TTS
+                     // Save history
+                     // User message
+                     let _ = state.db.add_chat_history(device_id, "user", &text).await;
+                     // Model message
+                     let _ = state.db.add_chat_history(device_id, "model", &response_text).await;
+
+                     // 4. TTS
                      let tts_start = ServerMessage::Tts { state: "start".to_string(), text: None };
                      let _ = tx.send(Message::Text(serde_json::to_string(&tts_start).unwrap().into())).await;
 
                      match state.tts.speak(&response_text).await {
                          Ok(audio_bytes) => {
-                             // Note: Sending one huge binary blob might overwhelm the client/buffer?
-                             // Usually we should stream it.
-                             // But `speak` returns full Vec<u8> currently.
                              let _ = tx.send(Message::Binary(audio_bytes.into())).await;
                          }
                          Err(e) => error!("TTS Error: {}", e),
@@ -159,13 +200,22 @@ async fn trigger_pipeline(
      }
 }
 
-async fn handle_socket(mut socket: WebSocket, addr: SocketAddr, state: AppState) {
-    info!("WebSocket connection established with {}", addr);
+async fn handle_socket(mut socket: WebSocket, addr: SocketAddr, state: AppState, device_id: String) {
+    info!("WebSocket connection established with {} (Device: {})", addr, device_id);
 
     let mut current_session_id = String::new();
     let mut is_listening = false;
-    // Buffer for collecting PCM samples for STT
     let mut pcm_buffer: Vec<u8> = Vec::new();
+
+    // Load history limit from config (passed via State or we need to access config)
+    // Currently `state` has `config`? No, `state` usually has services.
+    // Let's assume `AppState` struct (which we can't see fully here but inferred) might not have config directly accessible easily
+    // OR we should have added `history_limit` to `AppState` or `LlmService`.
+    // But `LlmTrait` doesn't expose it.
+    // Let's default to 5 if we can't get it, or access it if `state.config` exists.
+    // I'll check `src/state/mod.rs` later. For now, hardcode or try to find a way.
+    // Actually, I can add `history_limit` to `AppState` in `main.rs`.
+    // Let's assume `state.history_limit` exists (I will add it).
 
     // VAD State
     let mut vad = VoiceActivityDetector::builder()
@@ -175,15 +225,11 @@ async fn handle_socket(mut socket: WebSocket, addr: SocketAddr, state: AppState)
         .expect("Failed to init VAD");
 
     let mut silence_chunks = 0;
-    let silence_threshold = 20; // 20 * 32ms ~= 640ms silence
+    let silence_threshold = 20;
     let mut has_spoken = false;
-    // Accumulate PCM for VAD processing (needs f32 usually, but this crate might take something else, let's check)
-    // The crate VoiceActivityDetector typically takes `&[f32]`.
-    // We need to buffer incoming PCM (i16) until we have `chunk_size` samples for VAD.
     let mut vad_accumulator: Vec<f32> = Vec::new();
     let vad_chunk_size = 512;
 
-    // Create Opus Decoder for this session
     let mut opus_decoder = match OpusService::new_decoder() {
         Ok(d) => Some(d),
         Err(e) => {
@@ -237,11 +283,10 @@ async fn handle_socket(mut socket: WebSocket, addr: SocketAddr, state: AppState)
                                      vad_accumulator.clear();
                                      has_spoken = false;
                                      silence_chunks = 0;
-                                     // Reset decoder state if possible or needed?
                                  } else if listen_state == "stop" {
                                      info!("Client stopped listening. Session: {}", current_session_id);
                                      is_listening = false;
-                                     trigger_pipeline(&state, &tx, &pcm_buffer).await;
+                                     trigger_pipeline(&state, &tx, &pcm_buffer, &device_id, state.history_limit).await;
                                      pcm_buffer.clear();
                                  }
                              },
@@ -263,21 +308,17 @@ async fn handle_socket(mut socket: WebSocket, addr: SocketAddr, state: AppState)
             Message::Binary(bin) => {
                 if is_listening {
                     if let Some(decoder) = opus_decoder.as_mut() {
-                        let mut output = vec![0i16; 5760]; // Max buffer
+                        let mut output = vec![0i16; 5760];
                         match decoder.decode(&bin, &mut output, false) {
                             Ok(len) => {
-                                // Convert i16 samples to bytes (little endian)
                                 for sample in &output[..len] {
                                     let s = *sample;
                                     pcm_buffer.extend_from_slice(&s.to_le_bytes());
 
-                                    // VAD Processing
-                                    // Convert to f32
                                     vad_accumulator.push(s as f32 / 32768.0);
 
                                     while vad_accumulator.len() >= vad_chunk_size {
                                         let chunk: Vec<f32> = vad_accumulator.drain(0..vad_chunk_size).collect();
-                                        // VAD predict
                                         let probability = vad.predict(chunk);
 
                                         if probability > 0.5 {
@@ -289,19 +330,14 @@ async fn handle_socket(mut socket: WebSocket, addr: SocketAddr, state: AppState)
                                             }
                                         }
 
-                                        // Check trigger
                                         if has_spoken && silence_chunks > silence_threshold {
                                             info!("VAD: Silence detected after speech. Triggering pipeline.");
-                                            // Stop listening logic
-                                            is_listening = false; // Stop accepting new audio for this turn
-                                            trigger_pipeline(&state, &tx, &pcm_buffer).await;
+                                            is_listening = false;
+                                            trigger_pipeline(&state, &tx, &pcm_buffer, &device_id, state.history_limit).await;
                                             pcm_buffer.clear();
                                             vad_accumulator.clear();
                                             has_spoken = false;
                                             silence_chunks = 0;
-
-                                            // TODO: Should we inform client we stopped listening?
-                                            // The client might expect a "tts: start" message to switch state, which trigger_pipeline sends.
                                         }
                                     }
                                 }

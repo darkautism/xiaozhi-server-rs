@@ -1,4 +1,4 @@
-use crate::traits::LlmTrait;
+use crate::traits::{LlmTrait, Message};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -8,33 +8,46 @@ pub struct GeminiLlm {
     api_key: String,
     client: Client,
     model: String,
+    system_instruction: Option<String>,
 }
 
 impl GeminiLlm {
-    pub fn new(api_key: String, model: String) -> Self {
+    pub fn new(api_key: String, model: String, system_instruction: Option<String>) -> Self {
         Self {
             api_key,
             client: Client::new(),
             model,
+            system_instruction,
         }
     }
 }
 
 #[async_trait]
 impl LlmTrait for GeminiLlm {
-    async fn chat(&self, text: &str) -> Result<String> {
+    async fn chat(&self, messages: Vec<Message>) -> Result<String> {
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             self.model, self.api_key
         );
 
-        let body = json!({
-            "contents": [{
-                "parts": [{
-                    "text": text
-                }]
-            }]
+        // Map internal Message to Gemini Content format
+        let contents: Vec<Value> = messages.iter().map(|msg| {
+            json!({
+                "role": msg.role,
+                "parts": [{ "text": msg.content }]
+            })
+        }).collect();
+
+        let mut body = json!({
+            "contents": contents
         });
+
+        // Add system_instruction if present
+        if let Some(instruction) = &self.system_instruction {
+            body["system_instruction"] = json!({
+                "parts": [{ "text": instruction }]
+            });
+        }
 
         let resp = self.client.post(&url)
             .json(&body)
