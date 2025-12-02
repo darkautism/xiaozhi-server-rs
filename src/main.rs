@@ -1,18 +1,19 @@
 mod config;
 mod handlers;
 mod state;
+mod traits;
+mod services;
 
 use axum::{
     routing::{get, post},
     Router,
 };
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tower_http::trace::TraceLayer;
 
 use crate::config::ServerConfig;
-use crate::state::{AppState, InMemoryDb};
+use crate::state::AppState;
 use crate::handlers::{ota, websocket};
 
 #[tokio::main]
@@ -34,10 +35,8 @@ async fn main() {
         }
     };
 
-    let app_state = AppState {
-        config: Arc::new(config),
-        db: Arc::new(RwLock::new(InMemoryDb::new())),
-    };
+    // AppState::new is now async
+    let app_state = AppState::new(config).await;
 
     // Build our application with routes
     // Configure TraceLayer to include headers and body (if printable)
