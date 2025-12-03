@@ -417,15 +417,14 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
 
         tokio::select! {
             event_opt = all_events.next() => {
-                last_activity = Instant::now();
-                is_standby = false;
-
                 match event_opt {
                     Some(LoopEvent::Ws(res)) => {
                         match res {
                             Ok(msg) => {
                                 match msg {
                                     Message::Text(text) => {
+                                        last_activity = Instant::now();
+                                        is_standby = false;
                                         info!("Received text message: {}", text);
                                         match serde_json::from_str::<ClientMessage>(&text) {
                                             Ok(client_message) => {
@@ -472,6 +471,8 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                                     }
                                     Message::Binary(bin) => {
                                         if state_enum == SessionState::Listening {
+                                            last_activity = Instant::now();
+                                            is_standby = false;
                                             if let Some(decoder) = opus_decoder.as_mut() {
                                                 let mut output = vec![0i16; 5760];
                                                 match decoder.decode(&bin, &mut output, false) {
@@ -498,6 +499,8 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                     Some(LoopEvent::Stt(evt)) => {
                         match evt {
                             SttEvent::Text(text) => {
+                                last_activity = Instant::now();
+                                is_standby = false;
                                 accumulated_text.push_str(&text);
                                 accumulated_text.push(' ');
                                 let stt_msg = ServerMessage::Stt { text: accumulated_text.clone() };
@@ -518,6 +521,8 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                             ControlMessage::LlmFinished => {
                                 info!("LLM Finished. Switching to Listening.");
                                 state_enum = SessionState::Listening;
+                                last_activity = Instant::now();
+                                is_standby = false;
                             }
                             ControlMessage::Sleep => {
                                 info!("Sleep requested. Closing.");
