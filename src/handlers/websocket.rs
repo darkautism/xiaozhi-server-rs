@@ -354,6 +354,7 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                          match event {
                              SttEvent::Text(text) => {
                                  accumulated_text.push_str(&text);
+                                 accumulated_text.push(' ');
                                  let stt_msg = ServerMessage::Stt { text: accumulated_text.clone() };
                                  let _ = tx.send(Message::Text(serde_json::to_string(&stt_msg).unwrap().into())).await;
                              }

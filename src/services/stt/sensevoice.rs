@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use futures_util::stream::{BoxStream, StreamExt};
 use crate::config::VadSettings;
+use async_stream::stream;
+use futures_util::Stream;
 
 pub struct SenseVoiceStt {
     shared_model: Arc<Mutex<Option<SenseVoiceSmall>>>,
@@ -75,9 +77,6 @@ impl SttTrait for SenseVoiceStt {
         let vad_settings = self.vad_settings.clone();
 
         // Spawn a dedicated thread to handle the !Send stream from sensevoice-rs
-        // This is necessary because sensevoice-rs stream yields items containing Box<dyn StdError> which is !Send,
-        // preventing the future from being Send and thus spawnable by tokio.
-        // By running in a dedicated thread with a local runtime, we bypass the Send requirement for the stream polling.
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -89,8 +88,12 @@ impl SttTrait for SenseVoiceStt {
                     if let Ok(mut model) = model_init {
                         model.set_vad_silence_notification(Some(vad_settings.silence_duration_ms));
 
-                        let stream = model.infer_stream(input_stream);
-                        // We can pin it here as !Send is allowed in this block
+                        // Ensure input is chunked to 512 samples as required by sensevoice-rs infer_stream
+                        let chunked_input = chunk_stream(input_stream, 512);
+                        // chunk_stream returns !Unpin stream, but infer_stream requires Unpin.
+                        let pinned_input = Box::pin(chunked_input);
+                        let stream = model.infer_stream(pinned_input);
+
                         let mut pinned_stream = Box::pin(stream);
 
                         while let Some(result) = pinned_stream.next().await {
@@ -125,5 +128,24 @@ impl SttTrait for SenseVoiceStt {
 
         let output_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         Ok(Box::pin(output_stream))
+    }
+}
+
+// Helper to chunk the stream into fixed size vectors
+fn chunk_stream<S>(mut input: S, chunk_size: usize) -> impl Stream<Item = Vec<i16>>
+where S: Stream<Item = Vec<i16>> + Unpin {
+    stream! {
+        let mut buffer: Vec<i16> = Vec::new();
+        while let Some(chunk) = input.next().await {
+            buffer.extend(chunk);
+            while buffer.len() >= chunk_size {
+                let send = buffer.drain(0..chunk_size).collect::<Vec<i16>>();
+                yield send;
+            }
+        }
+        if !buffer.is_empty() {
+            buffer.resize(chunk_size, 0);
+            yield buffer;
+        }
     }
 }

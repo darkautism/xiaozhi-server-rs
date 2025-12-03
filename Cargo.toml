@@ -25,6 +25,7 @@ uuid = { version = "1", features = ["v4"] }
 rand = { version = "0.9", features = ["std_rng"] }
 chrono = "0.4"
 anyhow = "1.0.100"
+async-stream = "0.3"
 async-trait = "0.1.89"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 sensevoice-rs = { version = "0.1.5", features = ["stream"] }
