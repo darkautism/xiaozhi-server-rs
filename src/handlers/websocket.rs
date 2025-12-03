@@ -176,7 +176,7 @@ async fn process_text_logic(
              }
 
              // Calculate audio duration
-             let wait_ms = frame_count as u64 * 120;
+             let wait_ms = frame_count as u64 * 60; // 60ms per frame
 
              // Send Stop immediately so client starts playing
              let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
@@ -350,9 +350,6 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
 
         tokio::select! {
             event_opt = all_events.next() => {
-                // Any event resets idle timer?
-                // Maybe only WS (User) or STT (Voice).
-                // Control (LLM finish) should also reset to prevent immediate standby after talking.
                 last_activity = Instant::now();
                 is_standby = false;
 
