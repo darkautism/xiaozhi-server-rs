@@ -155,6 +155,13 @@ async fn process_text_logic(
              let tts_start = ServerMessage::Tts { state: "start".to_string(), text: None };
              let _ = tx.send(Message::Text(serde_json::to_string(&tts_start).unwrap().into())).await;
 
+             // Send sentence_start for display
+             let tts_sentence = ServerMessage::Tts {
+                 state: "sentence_start".to_string(),
+                 text: Some(clean_response.clone())
+             };
+             let _ = tx.send(Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await;
+
              let mut frame_count = 0;
              match state.tts.speak(&clean_response).await {
                  Ok(frames) => {
@@ -202,6 +209,13 @@ async fn trigger_tts_only(
     info!("Triggering TTS only: {}", text);
     let tts_start = ServerMessage::Tts { state: "start".to_string(), text: None };
     let _ = tx.send(Message::Text(serde_json::to_string(&tts_start).unwrap().into())).await;
+
+    // Send sentence_start
+    let tts_sentence = ServerMessage::Tts {
+        state: "sentence_start".to_string(),
+        text: Some(text.to_string())
+    };
+    let _ = tx.send(Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await;
 
     match state.tts.speak(text).await {
         Ok(frames) => {
