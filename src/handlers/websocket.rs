@@ -316,7 +316,14 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
 
                                                      // Process any accumulated text if not empty
                                                      if !accumulated_text.is_empty() {
-                                                          process_text_pipeline(&state, &tx, &accumulated_text, &device_id).await;
+                                                          let state_clone = state.clone();
+                                                          let tx_clone = tx.clone();
+                                                          let text = accumulated_text.clone();
+                                                          let dev_id = device_id.clone();
+                                                          tokio::spawn(async move {
+                                                              process_text_pipeline(&state_clone, &tx_clone, &text, &dev_id).await;
+                                                          });
+
                                                           last_activity = Instant::now(); // Reset idle timer
                                                           accumulated_text.clear();
                                                      }
@@ -386,7 +393,14 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                                  stt_input_tx = None;
                                  stt_output_stream = None;
 
-                                 process_text_pipeline(&state, &tx, &accumulated_text, &device_id).await;
+                                 let state_clone = state.clone();
+                                 let tx_clone = tx.clone();
+                                 let text = accumulated_text.clone();
+                                 let dev_id = device_id.clone();
+                                 tokio::spawn(async move {
+                                     process_text_pipeline(&state_clone, &tx_clone, &text, &dev_id).await;
+                                 });
+
                                  last_activity = Instant::now(); // Reset idle timer
                                  accumulated_text.clear();
                              }
@@ -406,7 +420,15 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                  if !is_standby {
                      info!("Idle timeout detected. Sending standby prompt.");
                      is_standby = true;
-                     trigger_tts_only(&state, &tx, &state.config.chat.standby_prompt).await;
+
+                     let state_clone = state.clone();
+                     let tx_clone = tx.clone();
+                     let prompt = state.config.chat.standby_prompt.clone();
+
+                     tokio::spawn(async move {
+                         trigger_tts_only(&state_clone, &tx_clone, &prompt).await;
+                     });
+
                      last_activity = Instant::now(); // Reset idle timer
                  }
             }
