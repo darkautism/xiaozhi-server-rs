@@ -165,19 +165,21 @@ async fn process_text_pipeline(
                  Err(e) => error!("TTS Error: {}", e),
              }
 
-             // Wait for audio duration (estimated 120ms per frame) to prevent cutting off
+             // Calculate audio duration
              let wait_ms = frame_count as u64 * 120;
-             if wait_ms > 0 {
-                 tokio::time::sleep(Duration::from_millis(wait_ms)).await;
-             }
 
+             // Send Stop immediately so client starts playing
              let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
              let _ = tx.send(Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await;
 
              if should_sleep {
-                 info!("LLM requested sleep. Closing connection.");
-                 // Extra buffer to ensure client processes TTS Stop
+                 info!("LLM requested sleep. Keeping connection open for playback...");
+                 if wait_ms > 0 {
+                     tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+                 }
+                 // Extra buffer
                  tokio::time::sleep(Duration::from_secs(1)).await;
+                 info!("Closing connection.");
                  let _ = tx.send(Message::Close(None)).await;
              }
          }
@@ -207,12 +209,7 @@ async fn trigger_tts_only(
         Err(e) => error!("TTS Error: {}", e),
     }
 
-    // Wait for audio duration
-    let wait_ms = frame_count as u64 * 120;
-    if wait_ms > 0 {
-        tokio::time::sleep(Duration::from_millis(wait_ms)).await;
-    }
-
+    // Send Stop immediately
     let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
     let _ = tx.send(Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await;
 }
