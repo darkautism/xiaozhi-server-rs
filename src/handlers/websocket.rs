@@ -154,8 +154,10 @@ async fn process_text_pipeline(
              let tts_start = ServerMessage::Tts { state: "start".to_string(), text: None };
              let _ = tx.send(Message::Text(serde_json::to_string(&tts_start).unwrap().into())).await;
 
+             let mut frame_count = 0;
              match state.tts.speak(&clean_response).await {
                  Ok(frames) => {
+                     frame_count = frames.len();
                      for frame in frames {
                          let _ = tx.send(Message::Binary(frame.into())).await;
                      }
@@ -163,11 +165,19 @@ async fn process_text_pipeline(
                  Err(e) => error!("TTS Error: {}", e),
              }
 
+             // Wait for audio duration (estimated 120ms per frame) to prevent cutting off
+             let wait_ms = frame_count as u64 * 120;
+             if wait_ms > 0 {
+                 tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+             }
+
              let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
              let _ = tx.send(Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await;
 
              if should_sleep {
                  info!("LLM requested sleep. Closing connection.");
+                 // Extra buffer to ensure client processes TTS Stop
+                 tokio::time::sleep(Duration::from_secs(1)).await;
                  let _ = tx.send(Message::Close(None)).await;
              }
          }
@@ -186,13 +196,21 @@ async fn trigger_tts_only(
     let tts_start = ServerMessage::Tts { state: "start".to_string(), text: None };
     let _ = tx.send(Message::Text(serde_json::to_string(&tts_start).unwrap().into())).await;
 
+    let mut frame_count = 0;
     match state.tts.speak(text).await {
         Ok(frames) => {
+            frame_count = frames.len();
             for frame in frames {
                 let _ = tx.send(Message::Binary(frame.into())).await;
             }
         }
         Err(e) => error!("TTS Error: {}", e),
+    }
+
+    // Wait for audio duration
+    let wait_ms = frame_count as u64 * 120;
+    if wait_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(wait_ms)).await;
     }
 
     let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
@@ -296,6 +314,7 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                                                      // Process any accumulated text if not empty
                                                      if !accumulated_text.is_empty() {
                                                           process_text_pipeline(&state, &tx, &accumulated_text, &device_id).await;
+                                                          last_activity = Instant::now(); // Reset idle timer
                                                           accumulated_text.clear();
                                                      }
                                                  }
@@ -365,6 +384,7 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                                  stt_output_stream = None;
 
                                  process_text_pipeline(&state, &tx, &accumulated_text, &device_id).await;
+                                 last_activity = Instant::now(); // Reset idle timer
                                  accumulated_text.clear();
                              }
                          }
@@ -384,6 +404,7 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                      info!("Idle timeout detected. Sending standby prompt.");
                      is_standby = true;
                      trigger_tts_only(&state, &tx, &state.config.chat.standby_prompt).await;
+                     last_activity = Instant::now(); // Reset idle timer
                  }
             }
         }
