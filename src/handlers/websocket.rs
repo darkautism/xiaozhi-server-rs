@@ -188,31 +188,40 @@ async fn process_text_logic(
              };
              let _ = tx.send(Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await;
 
-             let mut frame_count = 0;
+             let mut total_frames = 0;
+             let frame_duration = Duration::from_millis(60);
+             let cache_frame_count = 2; // 120ms buffer
              let start_time = Instant::now();
 
              match state.tts.speak(&clean_text, emotion.as_deref()).await {
                  Ok(frames) => {
-                     frame_count = frames.len();
-                     info!("Sending {} audio frames", frame_count);
+                     info!("Sending {} audio frames (paced)", frames.len());
                      for frame in frames {
+                         // Flow control: Sliding window
+                         if total_frames >= cache_frame_count {
+                             let target_time = start_time + frame_duration * (total_frames - cache_frame_count) as u32;
+                             let now = Instant::now();
+                             if target_time > now {
+                                 tokio::time::sleep(target_time - now).await;
+                             }
+                         }
+
                          if tx.send(Message::Binary(frame.into())).await.is_err() {
                              warn!("Failed to send audio frame, client disconnected?");
                              break;
                          }
+                         total_frames += 1;
                      }
                      info!("Finished sending audio frames");
                  }
                  Err(e) => error!("TTS Error: {}", e),
              }
 
-             // Smart Wait: Wait for remaining playback duration
-             let total_duration = Duration::from_millis(frame_count as u64 * 60);
+             // Wait for playback to complete (Total Duration - Elapsed)
+             let total_duration = frame_duration * total_frames as u32;
              let elapsed = start_time.elapsed();
              if total_duration > elapsed {
-                 let remaining = total_duration - elapsed;
-                 info!("Waiting remaining playback time: {:?}", remaining);
-                 tokio::time::sleep(remaining).await;
+                 tokio::time::sleep(total_duration - elapsed).await;
              }
 
              // Send Stop
@@ -251,24 +260,34 @@ async fn trigger_tts_only(
     };
     let _ = tx.send(Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await;
 
-    let mut frame_count = 0;
+    let mut total_frames = 0;
+    let frame_duration = Duration::from_millis(60);
+    let cache_frame_count = 2;
     let start_time = Instant::now();
 
     // No emotion extraction for system prompts
     match state.tts.speak(text, None).await {
         Ok(frames) => {
-            frame_count = frames.len();
             for frame in frames {
+                if total_frames >= cache_frame_count {
+                    let target_time = start_time + frame_duration * (total_frames - cache_frame_count) as u32;
+                    let now = Instant::now();
+                    if target_time > now {
+                        tokio::time::sleep(target_time - now).await;
+                    }
+                }
+
                 if tx.send(Message::Binary(frame.into())).await.is_err() {
                     break;
                 }
+                total_frames += 1;
             }
         }
         Err(e) => error!("TTS Error: {}", e),
     }
 
     // Smart Wait
-    let total_duration = Duration::from_millis(frame_count as u64 * 60);
+    let total_duration = frame_duration * total_frames as u32;
     let elapsed = start_time.elapsed();
     if total_duration > elapsed {
         tokio::time::sleep(total_duration - elapsed).await;
