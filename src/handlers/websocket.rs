@@ -168,14 +168,13 @@ async fn trigger_pipeline(
                      match state.tts.speak(&response_text).await {
                          Ok(frames) => {
                              info!("Sending {} TTS frames", frames.len());
-                             // Calculate duration based on 60ms per frame (Opus 16k, 960 samples)
-                             let duration_ms = frames.len() as u64 * 60;
+                             // Calculate duration based on conservative estimate (120ms per frame) to prevent cutoff
+                             // User reported 60ms calculation resulted in half audio played.
+                             let duration_ms = frames.len() as u64 * 120;
 
                              // Send frames individually
                              for frame in frames {
                                  let _ = tx.send(Message::Binary(frame.into())).await;
-                                 // Optional: small delay if needed, but WebSocket over TCP should handle flow control.
-                                 // tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                              }
 
                              // Add delay to prevent robot from cutting off audio if "stop" acts as interrupt
@@ -254,8 +253,8 @@ async fn handle_socket(mut socket: WebSocket, addr: SocketAddr, state: AppState,
                 match serde_json::from_str::<ClientMessage>(&text) {
                     Ok(client_message) => {
                          match client_message {
-                             ClientMessage::Hello { .. } => {
-                                 info!("Processing Hello message from {}", addr);
+                             ClientMessage::Hello { transport, audio_params, .. } => {
+                                 info!("Processing Hello message from {}. Transport: {}, AudioParams: {:?}", addr, transport, audio_params);
                                  let response = ServerMessage::Hello {
                                      transport: "websocket".to_string(),
                                      audio_params: Some(AudioParamsResponse { sample_rate: 16000 }),
