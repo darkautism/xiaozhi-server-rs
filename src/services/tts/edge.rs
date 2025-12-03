@@ -56,10 +56,17 @@ impl TtsTrait for EdgeTts {
 
         let mut decoder = minimp3::Decoder::new(&audio_data[..]);
         let mut pcm_i16 = Vec::new();
+        let mut sample_rate = 0;
 
         loop {
             match decoder.next_frame() {
                 Ok(frame) => {
+                     if sample_rate == 0 {
+                         sample_rate = frame.sample_rate;
+                         info!("Edge TTS MP3 details: sample_rate={}, channels={}, layer={}, bitrate={}",
+                               frame.sample_rate, frame.channels, frame.layer, frame.bitrate);
+                     }
+
                      if frame.channels == 1 {
                          pcm_i16.extend_from_slice(&frame.data);
                      } else {
@@ -76,9 +83,17 @@ impl TtsTrait for EdgeTts {
             }
         }
 
-        // Resample 24k (or whatever) -> 16k
-        // Edge TTS normally returns 24kHz.
-        let resampled_pcm = resample_24k_to_16k(&pcm_i16);
+        // Resample based on actual sample rate
+        let resampled_pcm = if sample_rate == 16000 {
+            info!("Sample rate is 16kHz, skipping resampling.");
+            pcm_i16
+        } else if sample_rate == 24000 {
+            info!("Sample rate is 24kHz, resampling to 16kHz.");
+            resample_24k_to_16k(&pcm_i16)
+        } else {
+            info!("Sample rate is {}, attempting 24k->16k resampling (may be incorrect).", sample_rate);
+            resample_24k_to_16k(&pcm_i16)
+        };
 
         // Encode to Opus
         let mut encoder = OpusService::new_encoder()?;
