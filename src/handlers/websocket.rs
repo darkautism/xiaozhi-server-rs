@@ -360,6 +360,10 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                              }
                              SttEvent::NoSpeech => {
                                  info!("STT NoSpeech (End of Turn). Triggering pipeline.");
+                                 // Stop listening/STT to prevent interference and release resources
+                                 stt_input_tx = None;
+                                 stt_output_stream = None;
+
                                  process_text_pipeline(&state, &tx, &accumulated_text, &device_id).await;
                                  accumulated_text.clear();
                              }

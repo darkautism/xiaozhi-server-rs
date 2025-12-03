@@ -118,7 +118,7 @@ pub struct VadSettings {
 }
 
 fn default_silence_duration() -> u32 {
-    5000
+    2500
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]

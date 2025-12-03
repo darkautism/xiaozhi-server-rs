@@ -21,7 +21,7 @@ history_limit = 5
 system_instruction = "你是一個智慧音箱，請強制使用繁體中文（Traditional Chinese）與使用者交談。回復請避免過長思考與長篇大論，且避免類似書面語、論文、文檔形式的發言。請用類似人類的隨意語法發言。如果需要結束對話，請在回復的最後加上 [SLEEP] 標籤。"
 
 [vad]
-silence_duration_ms = 5000
+silence_duration_ms = 2500
 
 [chat]
 max_idle_duration = 30000
