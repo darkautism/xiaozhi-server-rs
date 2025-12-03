@@ -164,7 +164,7 @@ fn default_max_idle_duration() -> u64 {
 }
 
 fn default_standby_prompt() -> String {
-    "請問你還在嗎？".to_string()
+    "我先去休息了，有需要再叫我。".to_string()
 }
 
 impl ServerConfig {
