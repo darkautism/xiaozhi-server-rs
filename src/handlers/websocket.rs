@@ -168,14 +168,19 @@ async fn trigger_pipeline(
                      match state.tts.speak(&response_text).await {
                          Ok(frames) => {
                              info!("Sending {} TTS frames", frames.len());
+                             // Calculate duration based on 60ms per frame (Opus 16k, 960 samples)
+                             let duration_ms = frames.len() as u64 * 60;
+
                              // Send frames individually
                              for frame in frames {
                                  let _ = tx.send(Message::Binary(frame.into())).await;
                                  // Optional: small delay if needed, but WebSocket over TCP should handle flow control.
                                  // tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                              }
+
                              // Add delay to prevent robot from cutting off audio if "stop" acts as interrupt
-                             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                             info!("Waiting {}ms for playback before sending stop signal", duration_ms);
+                             tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
                          }
                          Err(e) => error!("TTS Error: {}", e),
                      }

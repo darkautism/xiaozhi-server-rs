@@ -52,6 +52,15 @@ impl TtsTrait for EdgeTts {
 
         let audio_data = audio_metadata.audio_bytes;
 
+        // Debug: Save audio for inspection
+        let uuid = uuid::Uuid::new_v4();
+        let tmp_path = format!("/tmp/tts_{}.mp3", uuid);
+        if let Err(e) = std::fs::write(&tmp_path, &audio_data) {
+             info!("Failed to save debug audio: {}", e);
+        } else {
+             info!("Debug audio saved to: {}", tmp_path);
+        }
+
         info!("Received {} bytes of MP3 audio from Edge TTS", audio_data.len());
 
         let mut decoder = minimp3::Decoder::new(&audio_data[..]);
