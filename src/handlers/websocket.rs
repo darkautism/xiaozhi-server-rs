@@ -303,14 +303,15 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
     let state_clone = state.clone();
     let tx_clone = tx.clone();
     let dev_id = device_id.clone();
+    let control_tx_llm = control_tx.clone();
 
     tokio::spawn(async move {
         while let Some(text) = llm_rx.recv().await {
             let should_sleep = process_text_logic(&state_clone, &tx_clone, &text, &dev_id).await;
             if should_sleep {
-                let _ = control_tx.send(ControlMessage::Sleep).await;
+                let _ = control_tx_llm.send(ControlMessage::Sleep).await;
             } else {
-                let _ = control_tx.send(ControlMessage::LlmFinished).await;
+                let _ = control_tx_llm.send(ControlMessage::LlmFinished).await;
             }
         }
     });
@@ -336,7 +337,9 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
     loop {
         let now = Instant::now();
         let timeout_at = last_activity + max_idle_duration;
-        let sleep_duration = if timeout_at > now {
+        let sleep_duration = if state_enum == SessionState::Processing {
+            Duration::from_secs(3600 * 24) // Disable timer during processing
+        } else if timeout_at > now {
             timeout_at - now
         } else {
             Duration::from_millis(100)
@@ -458,19 +461,20 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
             }
 
             _ = tokio::time::sleep(sleep_duration) => {
-                 if !is_standby {
+                 if !is_standby && state_enum != SessionState::Processing {
                      info!("Idle timeout detected. Sending standby prompt.");
                      is_standby = true;
 
                      let state_clone = state.clone();
                      let tx_clone = tx.clone();
                      let prompt = state.config.chat.standby_prompt.clone();
+                     let control_tx_clone = control_tx.clone();
 
                      tokio::spawn(async move {
                          trigger_tts_only(&state_clone, &tx_clone, &prompt).await;
+                         // Signal completion to reset idle timer after speaking
+                         let _ = control_tx_clone.send(ControlMessage::LlmFinished).await;
                      });
-
-                     last_activity = Instant::now();
                  }
             }
         }
