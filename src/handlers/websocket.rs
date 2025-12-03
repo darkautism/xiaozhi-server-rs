@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
 };
 use std::net::SocketAddr;
-use futures_util::{stream::StreamExt, SinkExt};
+use futures_util::{stream::StreamExt, SinkExt, stream::select_all, stream::BoxStream};
 use serde_json::{json, Value};
 use tracing::{info, warn, error, debug};
 use std::sync::Arc;
@@ -228,6 +228,12 @@ enum ControlMessage {
     Sleep,
 }
 
+enum LoopEvent {
+    Ws(Result<Message, axum::Error>),
+    Stt(SttEvent),
+    Control(ControlMessage),
+}
+
 async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: AppState, device_id: String) {
     info!("WebSocket connection established with {} (Device: {})", addr, device_id);
 
@@ -243,7 +249,6 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
     };
 
     let (mut sender, mut receiver) = socket.split();
-    // Increase channel size to avoid backpressure from fast TTS
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(256);
 
     let mut writer_handle = tokio::spawn(async move {
@@ -263,8 +268,6 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
     let (stt_event_tx, mut stt_event_rx) = tokio::sync::mpsc::channel::<SttEvent>(32);
 
     let stt = state.stt.clone();
-    // We spawn the stream bridge task. stream_speech internally spawns the dedicated thread.
-    // We just need to pipe stt_audio_rx -> input_stream -> stream_speech -> stt_event_tx
     tokio::spawn(async move {
         let input_stream = ReceiverStream::new(stt_audio_rx);
         let boxed_input = Box::pin(input_stream);
@@ -304,7 +307,19 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
         }
     });
 
-    // 3. Main Loop
+    // 3. Unified Streams
+    let ws_stream = receiver.map(LoopEvent::Ws);
+    let stt_stream = ReceiverStream::new(stt_event_rx).map(LoopEvent::Stt);
+    let ctrl_stream = ReceiverStream::new(control_rx).map(LoopEvent::Control);
+
+    let streams: Vec<BoxStream<'static, LoopEvent>> = vec![
+        Box::pin(ws_stream),
+        Box::pin(stt_stream),
+        Box::pin(ctrl_stream),
+    ];
+    let mut all_events = select_all(streams);
+
+    // 4. Main Loop
     let mut state_enum = SessionState::Listening;
     let max_idle_duration = Duration::from_millis(state.config.chat.max_idle_duration);
     let mut last_activity = Instant::now();
@@ -320,99 +335,87 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
         };
 
         tokio::select! {
-            // A. WebSocket Messages
-            msg_opt = receiver.next() => {
+            event_opt = all_events.next() => {
+                // Any event resets idle timer?
+                // Maybe only WS (User) or STT (Voice).
+                // Control (LLM finish) should also reset to prevent immediate standby after talking.
                 last_activity = Instant::now();
                 is_standby = false;
 
-                match msg_opt {
-                    Some(Ok(msg)) => {
-                        match msg {
-                            Message::Text(text) => {
-                                info!("Received text message: {}", text);
-                                match serde_json::from_str::<ClientMessage>(&text) {
-                                    Ok(client_message) => {
-                                         match client_message {
-                                             ClientMessage::Hello { .. } => {
-                                                 let response = ServerMessage::Hello {
-                                                     transport: "websocket".to_string(),
-                                                     audio_params: Some(AudioParamsResponse { sample_rate: 16000 }),
-                                                 };
-                                                 let _ = tx.send(Message::Text(serde_json::to_string(&response).unwrap().into())).await;
-                                             },
-                                             ClientMessage::Listen { session_id, state: listen_state, .. } => {
-                                                 current_session_id = session_id;
-                                                 if listen_state == "start" {
-                                                     info!("Client started listening.");
-                                                     // We are always listening in STT thread, just need to set state to forward audio
-                                                     state_enum = SessionState::Listening;
-                                                     accumulated_text.clear();
-                                                 } else if listen_state == "stop" {
-                                                     info!("Client stopped listening.");
-                                                     // Transition to Processing? Or Idle?
-                                                     // Usually explicit stop means user finished speaking manually.
-                                                     // We should process what we have.
-                                                     if !accumulated_text.is_empty() {
-                                                         state_enum = SessionState::Processing;
-                                                         let _ = llm_tx.send(accumulated_text.clone()).await;
+                match event_opt {
+                    Some(LoopEvent::Ws(res)) => {
+                        match res {
+                            Ok(msg) => {
+                                match msg {
+                                    Message::Text(text) => {
+                                        info!("Received text message: {}", text);
+                                        match serde_json::from_str::<ClientMessage>(&text) {
+                                            Ok(client_message) => {
+                                                 match client_message {
+                                                     ClientMessage::Hello { .. } => {
+                                                         let response = ServerMessage::Hello {
+                                                             transport: "websocket".to_string(),
+                                                             audio_params: Some(AudioParamsResponse { sample_rate: 16000 }),
+                                                         };
+                                                         let _ = tx.send(Message::Text(serde_json::to_string(&response).unwrap().into())).await;
+                                                     },
+                                                     ClientMessage::Listen { session_id, state: listen_state, .. } => {
+                                                         current_session_id = session_id;
+                                                         if listen_state == "start" {
+                                                             info!("Client started listening.");
+                                                             state_enum = SessionState::Listening;
+                                                             accumulated_text.clear();
+                                                         } else if listen_state == "stop" {
+                                                             info!("Client stopped listening.");
+                                                             if !accumulated_text.is_empty() {
+                                                                 state_enum = SessionState::Processing;
+                                                                 let _ = llm_tx.send(accumulated_text.clone()).await;
+                                                                 accumulated_text.clear();
+                                                             } else {
+                                                                 state_enum = SessionState::Processing;
+                                                             }
+                                                         }
+                                                     },
+                                                     ClientMessage::Abort { reason, .. } => {
+                                                         info!("Client aborted: {}", reason);
+                                                         state_enum = SessionState::Listening;
                                                          accumulated_text.clear();
-                                                     } else {
-                                                         // If no text, just idle/processing waiting for nothing?
-                                                         // Maybe go to Listening? No, stop means stop.
-                                                         // But we stay in Listening state effectively just waiting for start?
-                                                         // Or we block audio.
-                                                         // Let's assume Processing state blocks audio.
-                                                         state_enum = SessionState::Processing;
-                                                         // But we won't trigger LLM.
-                                                         // We'll wait for next Listen: start.
+                                                     },
+                                                     ClientMessage::Iot { .. } => {
+                                                         info!("Received IoT message");
                                                      }
                                                  }
-                                             },
-                                             ClientMessage::Abort { reason, .. } => {
-                                                 info!("Client aborted: {}", reason);
-                                                 state_enum = SessionState::Listening; // Reset?
-                                                 accumulated_text.clear();
-                                             },
-                                             ClientMessage::Iot { .. } => {
-                                                 info!("Received IoT message");
-                                             }
-                                         }
-                                    }
-                                    Err(e) => error!("Error deserializing message: {}", e),
-                                }
-                            }
-                            Message::Binary(bin) => {
-                                if state_enum == SessionState::Listening {
-                                    if let Some(decoder) = opus_decoder.as_mut() {
-                                        let mut output = vec![0i16; 5760];
-                                        match decoder.decode(&bin, &mut output, false) {
-                                            Ok(len) => {
-                                                let pcm_chunk = output[..len].to_vec();
-                                                // Send to STT Worker
-                                                let _ = stt_audio_tx.send(pcm_chunk).await;
                                             }
-                                            Err(e) => error!("Opus decode error: {}", e),
+                                            Err(e) => error!("Error deserializing message: {}", e),
                                         }
                                     }
+                                    Message::Binary(bin) => {
+                                        if state_enum == SessionState::Listening {
+                                            if let Some(decoder) = opus_decoder.as_mut() {
+                                                let mut output = vec![0i16; 5760];
+                                                match decoder.decode(&bin, &mut output, false) {
+                                                    Ok(len) => {
+                                                        let pcm_chunk = output[..len].to_vec();
+                                                        let _ = stt_audio_tx.send(pcm_chunk).await;
+                                                    }
+                                                    Err(e) => error!("Opus decode error: {}", e),
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Message::Ping(_) => { let _ = tx.send(Message::Pong(vec![].into())).await; }
+                                    Message::Pong(_) => {}
+                                    Message::Close(_) => break,
                                 }
-                                // Else: Drop audio (Processing state)
+                            },
+                            Err(e) => {
+                                error!("WS Error: {}", e);
+                                break;
                             }
-                            Message::Ping(_) => { let _ = tx.send(Message::Pong(vec![].into())).await; }
-                            Message::Pong(_) => {}
-                            Message::Close(_) => break,
                         }
-                    }
-                    Some(Err(e)) => { error!("Error receiving message: {}", e); break; }
-                    None => break,
-                }
-            }
-
-            // B. STT Events
-            stt_evt_opt = stt_event_rx.recv() => {
-                last_activity = Instant::now();
-                match stt_evt_opt {
-                    Some(event) => {
-                        match event {
+                    },
+                    Some(LoopEvent::Stt(evt)) => {
+                        match evt {
                             SttEvent::Text(text) => {
                                 accumulated_text.push_str(&text);
                                 accumulated_text.push(' ');
@@ -425,42 +428,30 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                                     state_enum = SessionState::Processing;
                                     let _ = llm_tx.send(accumulated_text.clone()).await;
                                     accumulated_text.clear();
-                                } else {
-                                    // Silence detected but no text.
-                                    // Just continue listening?
-                                    // STT thread continues automatically.
                                 }
                             }
                         }
-                    }
+                    },
+                    Some(LoopEvent::Control(msg)) => {
+                        match msg {
+                            ControlMessage::LlmFinished => {
+                                info!("LLM Finished. Switching to Listening.");
+                                state_enum = SessionState::Listening;
+                            }
+                            ControlMessage::Sleep => {
+                                info!("Sleep requested. Closing.");
+                                let _ = tx.send(Message::Close(None)).await;
+                                break;
+                            }
+                        }
+                    },
                     None => {
-                        error!("STT Worker died.");
+                        info!("A stream ended (likely connection closed). Exiting loop.");
                         break;
                     }
                 }
             }
 
-            // C. Control Events (LLM Finished)
-            ctrl_opt = control_rx.recv() => {
-                match ctrl_opt {
-                    Some(ControlMessage::LlmFinished) => {
-                        info!("LLM Finished. Switching to Listening.");
-                        state_enum = SessionState::Listening;
-                        last_activity = Instant::now(); // Reset idle timer
-                    }
-                    Some(ControlMessage::Sleep) => {
-                        info!("Sleep requested. Closing.");
-                        let _ = tx.send(Message::Close(None)).await;
-                        break;
-                    }
-                    None => {
-                        error!("Control channel closed.");
-                        break;
-                    }
-                }
-            }
-
-            // D. Idle Timer
             _ = tokio::time::sleep(sleep_duration) => {
                  if !is_standby {
                      info!("Idle timeout detected. Sending standby prompt.");
