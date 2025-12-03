@@ -47,7 +47,7 @@ impl AppState {
             config.llm.system_instruction.clone(),
         ));
 
-        let stt = Arc::new(SenseVoiceStt::new());
+        let stt = Arc::new(SenseVoiceStt::new(config.vad.clone()));
 
         let tts: Arc<dyn TtsTrait + Send + Sync> = match config.tts.provider.as_str() {
             "gemini" => {

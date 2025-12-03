@@ -10,6 +10,10 @@ pub struct ServerConfig {
     pub tts: TtsSettings,
     #[serde(default)]
     pub db: DbSettings,
+    #[serde(default)]
+    pub vad: VadSettings,
+    #[serde(default)]
+    pub chat: ChatSettings,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +109,32 @@ impl Default for DbSettings {
             url: default_db_url(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct VadSettings {
+    #[serde(default = "default_silence_duration")]
+    pub silence_duration_ms: u32,
+}
+
+fn default_silence_duration() -> u32 {
+    5000
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct ChatSettings {
+    #[serde(default = "default_max_idle_duration")]
+    pub max_idle_duration: u64,
+    #[serde(default = "default_standby_prompt")]
+    pub standby_prompt: String,
+}
+
+fn default_max_idle_duration() -> u64 {
+    30000
+}
+
+fn default_standby_prompt() -> String {
+    "請問你還在嗎？".to_string()
 }
 
 impl ServerConfig {
