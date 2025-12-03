@@ -158,9 +158,11 @@ async fn process_text_pipeline(
              match state.tts.speak(&clean_response).await {
                  Ok(frames) => {
                      frame_count = frames.len();
+                     info!("Sending {} audio frames", frame_count);
                      for frame in frames {
                          let _ = tx.send(Message::Binary(frame.into())).await;
                      }
+                     info!("Finished sending audio frames");
                  }
                  Err(e) => error!("TTS Error: {}", e),
              }
@@ -171,9 +173,10 @@ async fn process_text_pipeline(
              // Send Stop immediately so client starts playing
              let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
              let _ = tx.send(Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await;
+             info!("Sent TTS Stop command");
 
              if should_sleep {
-                 info!("LLM requested sleep. Keeping connection open for playback...");
+                 info!("LLM requested sleep. Keeping connection open for playback ({} ms)...", wait_ms);
                  if wait_ms > 0 {
                      tokio::time::sleep(Duration::from_millis(wait_ms)).await;
                  }
@@ -234,6 +237,9 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
 
     let mut writer_handle = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
+            if let Message::Text(text) = &msg {
+                info!("Writer: Sending text message: {}", text);
+            }
             if let Err(e) = sender.send(msg).await {
                 // error!("Error sending message: {}", e);
                 break;
