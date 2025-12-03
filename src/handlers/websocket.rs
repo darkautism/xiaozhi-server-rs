@@ -178,17 +178,19 @@ async fn process_text_logic(
              // Calculate audio duration
              let wait_ms = frame_count as u64 * 60; // 60ms per frame
 
-             // Send Stop immediately so client starts playing
+             info!("Waiting {} ms for playback before Stop", wait_ms);
+             if wait_ms > 0 {
+                 tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+             }
+
+             // Send Stop after playback duration
              let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
              let _ = tx.send(Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await;
              info!("Sent TTS Stop command");
 
              if should_sleep {
-                 info!("LLM requested sleep. Keeping connection open for playback ({} ms)...", wait_ms);
-                 if wait_ms > 0 {
-                     tokio::time::sleep(Duration::from_millis(wait_ms)).await;
-                 }
-                 // Extra buffer
+                 info!("LLM requested sleep. Closing connection.");
+                 // Extra buffer before close
                  tokio::time::sleep(Duration::from_secs(1)).await;
              }
 
@@ -217,8 +219,10 @@ async fn trigger_tts_only(
     };
     let _ = tx.send(Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await;
 
+    let mut frame_count = 0;
     match state.tts.speak(text).await {
         Ok(frames) => {
+            frame_count = frames.len();
             for frame in frames {
                 let _ = tx.send(Message::Binary(frame.into())).await;
             }
@@ -226,7 +230,13 @@ async fn trigger_tts_only(
         Err(e) => error!("TTS Error: {}", e),
     }
 
-    // Send Stop immediately
+    // Wait for playback
+    let wait_ms = frame_count as u64 * 60;
+    if wait_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+    }
+
+    // Send Stop
     let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
     let _ = tx.send(Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await;
 }
