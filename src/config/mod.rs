@@ -71,6 +71,8 @@ pub struct TtsSettings {
     pub provider: String,
     #[serde(default)]
     pub gemini: Option<GeminiTtsConfig>,
+    #[serde(default)]
+    pub edge: Option<EdgeTtsConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,12 +84,40 @@ pub struct GeminiTtsConfig {
     pub voice_name: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EdgeTtsConfig {
+    #[serde(default = "default_edge_voice")]
+    pub voice: String,
+    #[serde(default = "default_edge_rate")]
+    pub rate: String,
+    #[serde(default = "default_edge_pitch")]
+    pub pitch: String,
+    #[serde(default = "default_edge_volume")]
+    pub volume: String,
+}
+
 fn default_tts_model() -> String {
     "gemini-2.5-flash-preview-tts".to_string()
 }
 
 fn default_tts_voice() -> String {
     "Kore".to_string()
+}
+
+fn default_edge_voice() -> String {
+    "zh-TW-HsiaoChenNeural".to_string()
+}
+
+fn default_edge_rate() -> String {
+    "+0%".to_string()
+}
+
+fn default_edge_pitch() -> String {
+    "+0Hz".to_string()
+}
+
+fn default_edge_volume() -> String {
+    "+0%".to_string()
 }
 
 #[derive(Debug, Deserialize)]
