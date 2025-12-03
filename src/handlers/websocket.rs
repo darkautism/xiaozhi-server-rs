@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio::time::{Instant, Duration};
+use regex::Regex;
 
 use crate::state::AppState;
 use crate::services::audio::opus_codec::OpusService;
@@ -61,6 +62,7 @@ pub enum ClientMessage {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AudioParamsResponse {
     pub sample_rate: u32,
+    pub frame_duration: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -108,6 +110,25 @@ pub async fn handle_websocket(
     ws.on_upgrade(move |socket| handle_socket_inner(socket, addr, state, device_id))
 }
 
+fn clean_text_and_extract_emotion(text: &str) -> (String, Option<String>) {
+    // Remove emoji characters
+    let re = Regex::new(r"\p{Emoji_Presentation}").unwrap();
+    let cleaned = re.replace_all(text, "").to_string();
+
+    // Basic emotion extraction heuristics
+    let emotion = if text.contains('😂') || text.contains('😊') || text.contains('哈') || text.contains('嘻') {
+        Some("happy".to_string())
+    } else if text.contains('😭') || text.contains('😢') || text.contains('难') {
+        Some("sad".to_string())
+    } else if text.contains('😡') || text.contains('怒') {
+        Some("angry".to_string())
+    } else {
+        None
+    };
+
+    (cleaned, emotion)
+}
+
 // Returns true if sleep is requested
 async fn process_text_logic(
     state: &AppState,
@@ -142,14 +163,19 @@ async fn process_text_logic(
 
              // Check for [SLEEP] tag
              let should_sleep = response_text.contains("[SLEEP]");
-             let clean_response = response_text.replace("[SLEEP]", "").trim().to_string();
+             let raw_response = response_text.replace("[SLEEP]", "").trim().to_string();
 
-             let llm_msg = ServerMessage::Llm { emotion: Some("happy".to_string()), text: Some(clean_response.clone()) };
+             let (clean_text, emotion) = clean_text_and_extract_emotion(&raw_response);
+
+             let llm_msg = ServerMessage::Llm {
+                 emotion: emotion.clone().or(Some("happy".to_string())),
+                 text: Some(clean_text.clone())
+             };
              let _ = tx.send(Message::Text(serde_json::to_string(&llm_msg).unwrap().into())).await;
 
-             // Save history
+             // Save history (use raw response to keep context if needed? Or cleaned? Usually raw)
              let _ = state.db.add_chat_history(device_id, "user", text).await;
-             let _ = state.db.add_chat_history(device_id, "model", &clean_response).await;
+             let _ = state.db.add_chat_history(device_id, "model", &clean_text).await;
 
              // 3. TTS
              let tts_start = ServerMessage::Tts { state: "start".to_string(), text: None };
@@ -158,23 +184,38 @@ async fn process_text_logic(
              // Send sentence_start for display
              let tts_sentence = ServerMessage::Tts {
                  state: "sentence_start".to_string(),
-                 text: Some(clean_response.clone())
+                 text: Some(clean_text.clone())
              };
              let _ = tx.send(Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await;
 
-             match state.tts.speak(&clean_response).await {
+             let mut frame_count = 0;
+             let start_time = Instant::now();
+
+             match state.tts.speak(&clean_text, emotion.as_deref()).await {
                  Ok(frames) => {
-                     info!("Sending {} audio frames (paced)", frames.len());
+                     frame_count = frames.len();
+                     info!("Sending {} audio frames", frame_count);
                      for frame in frames {
-                         let _ = tx.send(Message::Binary(frame.into())).await;
-                         tokio::time::sleep(Duration::from_millis(60)).await;
+                         if tx.send(Message::Binary(frame.into())).await.is_err() {
+                             warn!("Failed to send audio frame, client disconnected?");
+                             break;
+                         }
                      }
                      info!("Finished sending audio frames");
                  }
                  Err(e) => error!("TTS Error: {}", e),
              }
 
-             // Send Stop immediately (playback synchronized by pacing)
+             // Smart Wait: Wait for remaining playback duration
+             let total_duration = Duration::from_millis(frame_count as u64 * 60);
+             let elapsed = start_time.elapsed();
+             if total_duration > elapsed {
+                 let remaining = total_duration - elapsed;
+                 info!("Waiting remaining playback time: {:?}", remaining);
+                 tokio::time::sleep(remaining).await;
+             }
+
+             // Send Stop
              let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
              let _ = tx.send(Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await;
              info!("Sent TTS Stop command");
@@ -210,14 +251,27 @@ async fn trigger_tts_only(
     };
     let _ = tx.send(Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await;
 
-    match state.tts.speak(text).await {
+    let mut frame_count = 0;
+    let start_time = Instant::now();
+
+    // No emotion extraction for system prompts
+    match state.tts.speak(text, None).await {
         Ok(frames) => {
+            frame_count = frames.len();
             for frame in frames {
-                let _ = tx.send(Message::Binary(frame.into())).await;
-                tokio::time::sleep(Duration::from_millis(60)).await;
+                if tx.send(Message::Binary(frame.into())).await.is_err() {
+                    break;
+                }
             }
         }
         Err(e) => error!("TTS Error: {}", e),
+    }
+
+    // Smart Wait
+    let total_duration = Duration::from_millis(frame_count as u64 * 60);
+    let elapsed = start_time.elapsed();
+    if total_duration > elapsed {
+        tokio::time::sleep(total_duration - elapsed).await;
     }
 
     // Send Stop
@@ -338,7 +392,7 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
         let now = Instant::now();
         let timeout_at = last_activity + max_idle_duration;
         let sleep_duration = if state_enum == SessionState::Processing {
-            Duration::from_secs(3600 * 24) // Disable timer during processing
+            Duration::from_secs(3600 * 24)
         } else if timeout_at > now {
             timeout_at - now
         } else {
@@ -363,7 +417,10 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                                                      ClientMessage::Hello { .. } => {
                                                          let response = ServerMessage::Hello {
                                                              transport: "websocket".to_string(),
-                                                             audio_params: Some(AudioParamsResponse { sample_rate: 16000 }),
+                                                             audio_params: Some(AudioParamsResponse {
+                                                                 sample_rate: 16000,
+                                                                 frame_duration: 60,
+                                                             }),
                                                          };
                                                          let _ = tx.send(Message::Text(serde_json::to_string(&response).unwrap().into())).await;
                                                      },
@@ -472,8 +529,7 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
 
                      tokio::spawn(async move {
                          trigger_tts_only(&state_clone, &tx_clone, &prompt).await;
-                         // Signal completion to reset idle timer after speaking
-                         let _ = control_tx_clone.send(ControlMessage::LlmFinished).await;
+                         let _ = control_tx_clone.send(ControlMessage::Sleep).await;
                      });
                  }
             }

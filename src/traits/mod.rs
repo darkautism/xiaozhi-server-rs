@@ -36,7 +36,8 @@ pub trait SttTrait: Send + Sync {
 #[async_trait]
 pub trait TtsTrait: Send + Sync {
     // Returns a list of Opus encoded frames (each frame is a Vec<u8>)
-    async fn speak(&self, text: &str) -> anyhow::Result<Vec<Vec<u8>>>;
+    // emotion: Optional emotion string extracted from text (e.g. "happy", "sad")
+    async fn speak(&self, text: &str, emotion: Option<&str>) -> anyhow::Result<Vec<Vec<u8>>>;
 }
 
 #[async_trait]

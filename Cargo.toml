@@ -35,5 +35,6 @@ voice_activity_detector = "0.2.1"
 base64 = "0.22.1"
 msedge-tts = "0.2.4"
 minimp3 = "0.6.1"
+regex = "1"
 
 [dev-dependencies]
