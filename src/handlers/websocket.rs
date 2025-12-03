@@ -162,28 +162,19 @@ async fn process_text_logic(
              };
              let _ = tx.send(Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await;
 
-             let mut frame_count = 0;
              match state.tts.speak(&clean_response).await {
                  Ok(frames) => {
-                     frame_count = frames.len();
-                     info!("Sending {} audio frames", frame_count);
+                     info!("Sending {} audio frames (paced)", frames.len());
                      for frame in frames {
                          let _ = tx.send(Message::Binary(frame.into())).await;
+                         tokio::time::sleep(Duration::from_millis(60)).await;
                      }
                      info!("Finished sending audio frames");
                  }
                  Err(e) => error!("TTS Error: {}", e),
              }
 
-             // Calculate audio duration
-             let wait_ms = frame_count as u64 * 60; // 60ms per frame
-
-             info!("Waiting {} ms for playback before Stop", wait_ms);
-             if wait_ms > 0 {
-                 tokio::time::sleep(Duration::from_millis(wait_ms)).await;
-             }
-
-             // Send Stop after playback duration
+             // Send Stop immediately (playback synchronized by pacing)
              let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
              let _ = tx.send(Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await;
              info!("Sent TTS Stop command");
@@ -219,21 +210,14 @@ async fn trigger_tts_only(
     };
     let _ = tx.send(Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await;
 
-    let mut frame_count = 0;
     match state.tts.speak(text).await {
         Ok(frames) => {
-            frame_count = frames.len();
             for frame in frames {
                 let _ = tx.send(Message::Binary(frame.into())).await;
+                tokio::time::sleep(Duration::from_millis(60)).await;
             }
         }
         Err(e) => error!("TTS Error: {}", e),
-    }
-
-    // Wait for playback
-    let wait_ms = frame_count as u64 * 60;
-    if wait_ms > 0 {
-        tokio::time::sleep(Duration::from_millis(wait_ms)).await;
     }
 
     // Send Stop
