@@ -4,15 +4,18 @@ use axum::{
     response::IntoResponse,
 };
 use std::net::SocketAddr;
-use futures_util::{stream::StreamExt, SinkExt};
+use futures_util::{stream::StreamExt, SinkExt, stream::select_all, stream::BoxStream};
 use serde_json::{json, Value};
 use tracing::{info, warn, error, debug};
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
+use tokio_stream::wrappers::ReceiverStream;
+use tokio::time::{Instant, Duration};
+use regex::Regex;
 
 use crate::state::AppState;
 use crate::services::audio::opus_codec::OpusService;
-use voice_activity_detector::VoiceActivityDetector;
+use crate::traits::SttEvent;
 
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +62,7 @@ pub enum ClientMessage {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AudioParamsResponse {
     pub sample_rate: u32,
+    pub frame_duration: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -98,118 +102,226 @@ pub async fn handle_websocket(
     info!("WebSocket handshake attempt from {}", addr);
     debug!("WebSocket handshake headers: {:?}", headers);
 
-    // Extract Device ID if possible, otherwise use a default or session-based one
     let device_id = headers.get("x-device-id")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("unknown_device")
         .to_string();
 
-    ws.on_upgrade(move |socket| handle_socket(socket, addr, state, device_id))
+    ws.on_upgrade(move |socket| handle_socket_inner(socket, addr, state, device_id))
 }
 
-// Helper to trigger processing pipeline
-async fn trigger_pipeline(
+fn clean_text_and_extract_emotion(text: &str) -> (String, Option<String>) {
+    let re = Regex::new(r"\p{Emoji_Presentation}").unwrap();
+    let cleaned = re.replace_all(text, "").to_string();
+
+    let emotion = if text.contains('😂') || text.contains('😊') || text.contains('哈') || text.contains('嘻') {
+        Some("happy".to_string())
+    } else if text.contains('😭') || text.contains('😢') || text.contains('难') {
+        Some("sad".to_string())
+    } else if text.contains('😡') || text.contains('怒') {
+        Some("angry".to_string())
+    } else {
+        None
+    };
+
+    (cleaned, emotion)
+}
+
+// Helper to send message safely with timeout
+async fn send_message_safe(tx: &Sender<Message>, msg: Message) -> bool {
+    match tokio::time::timeout(Duration::from_secs(5), tx.send(msg)).await {
+        Ok(Ok(_)) => true,
+        Ok(Err(e)) => {
+            error!("Failed to send message: {}", e);
+            false
+        },
+        Err(_) => {
+            error!("Failed to send message: Timeout (Writer blocked)");
+            false
+        }
+    }
+}
+
+// Returns true if sleep is requested
+async fn process_text_logic(
     state: &AppState,
     tx: &Sender<Message>,
-    pcm_buffer: &[u8],
+    text: &str,
     device_id: &str,
-    history_limit: usize,
-) {
-     if pcm_buffer.is_empty() {
-         warn!("No audio received for STT");
-         return;
+) -> bool {
+     if text.trim().is_empty() {
+         return false;
      }
 
-     // 1. Trigger STT processing
-     match state.stt.recognize(pcm_buffer).await {
-         Ok(text) => {
-             info!("STT Result: {}", text);
-             if text.trim().is_empty() {
-                 info!("Empty STT result, ignoring.");
-                 return;
-             }
+     info!("Processing text: {}", text);
 
-             let stt_msg = ServerMessage::Stt { text: text.clone() };
-             let _ = tx.send(Message::Text(serde_json::to_string(&stt_msg).unwrap().into())).await;
+     let mut messages = match state.db.get_chat_history(device_id, state.history_limit).await {
+         Ok(h) => h,
+         Err(e) => {
+             error!("Failed to fetch chat history: {}", e);
+             Vec::new()
+         }
+     };
 
-             // 2. Prepare Chat History
-             // Fetch recent history
-             let mut messages = match state.db.get_chat_history(device_id, history_limit).await {
-                 Ok(h) => h,
-                 Err(e) => {
-                     error!("Failed to fetch chat history: {}", e);
-                     Vec::new()
-                 }
+     messages.push(crate::traits::Message {
+         role: "user".to_string(),
+         content: text.to_string(),
+     });
+
+     match state.llm.chat(messages).await {
+         Ok(response_text) => {
+             info!("LLM Response: {}", response_text);
+
+             let should_sleep = response_text.contains("[SLEEP]");
+             let raw_response = response_text.replace("[SLEEP]", "").trim().to_string();
+
+             let (clean_text, emotion) = clean_text_and_extract_emotion(&raw_response);
+
+             let llm_msg = ServerMessage::Llm {
+                 emotion: emotion.clone().or(Some("happy".to_string())),
+                 text: Some(clean_text.clone())
              };
+             if !send_message_safe(tx, Message::Text(serde_json::to_string(&llm_msg).unwrap().into())).await { return false; }
 
-             // Add current user message
-             messages.push(crate::traits::Message {
-                 role: "user".to_string(),
-                 content: text.clone(),
-             });
+             let _ = state.db.add_chat_history(device_id, "user", text).await;
+             let _ = state.db.add_chat_history(device_id, "model", &clean_text).await;
 
-             // 3. Call LLM
-             match state.llm.chat(messages).await {
-                 Ok(response_text) => {
-                     info!("LLM Response: {}", response_text);
-                     let llm_msg = ServerMessage::Llm { emotion: Some("happy".to_string()), text: Some(response_text.clone()) };
-                     let _ = tx.send(Message::Text(serde_json::to_string(&llm_msg).unwrap().into())).await;
+             let tts_start = ServerMessage::Tts { state: "start".to_string(), text: None };
+             if !send_message_safe(tx, Message::Text(serde_json::to_string(&tts_start).unwrap().into())).await { return false; }
 
-                     // Save history
-                     // User message
-                     let _ = state.db.add_chat_history(device_id, "user", &text).await;
-                     // Model message
-                     let _ = state.db.add_chat_history(device_id, "model", &response_text).await;
+             let tts_sentence = ServerMessage::Tts {
+                 state: "sentence_start".to_string(),
+                 text: Some(clean_text.clone())
+             };
+             if !send_message_safe(tx, Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await { return false; }
 
-                     // 4. TTS
-                     let tts_start = ServerMessage::Tts { state: "start".to_string(), text: None };
-                     let _ = tx.send(Message::Text(serde_json::to_string(&tts_start).unwrap().into())).await;
+             let mut total_frames = 0;
+             let frame_duration = Duration::from_millis(60);
+             let cache_frame_count = 2;
 
-                     match state.tts.speak(&response_text).await {
-                         Ok(frames) => {
-                             // Send frames individually
-                             for frame in frames {
-                                 let _ = tx.send(Message::Binary(frame.into())).await;
-                                 // Optional: small delay if needed, but WebSocket over TCP should handle flow control.
-                                 // tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+             match state.tts.speak(&clean_text, emotion.as_deref()).await {
+                 Ok(frames) => {
+                     let start_time = Instant::now();
+                     info!("Sending {} audio frames (paced)", frames.len());
+                     for frame in frames {
+                         // Flow control: Sliding window
+                         if total_frames >= cache_frame_count {
+                             let target_time = start_time + frame_duration * (total_frames - cache_frame_count) as u32;
+                             let now = Instant::now();
+                             if target_time > now {
+                                 tokio::time::sleep(target_time - now).await;
                              }
                          }
-                         Err(e) => error!("TTS Error: {}", e),
-                     }
 
-                     let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
-                     let _ = tx.send(Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await;
+                         if !send_message_safe(tx, Message::Binary(frame.into())).await {
+                             warn!("Failed to send audio frame");
+                             return false; // Abort
+                         }
+                         total_frames += 1;
+                     }
+                     info!("Finished sending audio frames");
+
+                     let total_duration = frame_duration * total_frames as u32;
+                     let elapsed = start_time.elapsed();
+                     if total_duration > elapsed {
+                         tokio::time::sleep(total_duration - elapsed).await;
+                     }
+                     // Ensure client buffer plays out
+                     tokio::time::sleep(Duration::from_millis(500)).await;
                  }
-                 Err(e) => {
-                     error!("LLM Error: {}", e);
-                 }
+                 Err(e) => error!("TTS Error: {}", e),
              }
+
+             let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
+             if !send_message_safe(tx, Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await { return false; }
+             info!("Sent TTS Stop command");
+
+             if should_sleep {
+                 info!("LLM requested sleep. Closing connection.");
+                 tokio::time::sleep(Duration::from_secs(1)).await;
+             }
+
+             return should_sleep;
          }
          Err(e) => {
-             error!("STT Error: {}", e);
+             error!("LLM Error: {}", e);
+             return false;
          }
      }
 }
 
-async fn handle_socket(mut socket: WebSocket, addr: SocketAddr, state: AppState, device_id: String) {
+async fn trigger_tts_only(
+    state: &AppState,
+    tx: &Sender<Message>,
+    text: &str,
+) {
+    info!("Triggering TTS only: {}", text);
+    let tts_start = ServerMessage::Tts { state: "start".to_string(), text: None };
+    if !send_message_safe(tx, Message::Text(serde_json::to_string(&tts_start).unwrap().into())).await { return; }
+
+    let tts_sentence = ServerMessage::Tts {
+        state: "sentence_start".to_string(),
+        text: Some(text.to_string())
+    };
+    if !send_message_safe(tx, Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await { return; }
+
+    let mut total_frames = 0;
+    let frame_duration = Duration::from_millis(60);
+    let cache_frame_count = 2;
+
+    match state.tts.speak(text, None).await {
+        Ok(frames) => {
+            let start_time = Instant::now();
+            for frame in frames {
+                if total_frames >= cache_frame_count {
+                    let target_time = start_time + frame_duration * (total_frames - cache_frame_count) as u32;
+                    let now = Instant::now();
+                    if target_time > now {
+                        tokio::time::sleep(target_time - now).await;
+                    }
+                }
+
+                if !send_message_safe(tx, Message::Binary(frame.into())).await {
+                    return;
+                }
+                total_frames += 1;
+            }
+            let total_duration = frame_duration * total_frames as u32;
+            let elapsed = start_time.elapsed();
+            if total_duration > elapsed {
+                tokio::time::sleep(total_duration - elapsed).await;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        Err(e) => error!("TTS Error: {}", e),
+    }
+
+    let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
+    let _ = send_message_safe(tx, Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await;
+}
+
+#[derive(PartialEq)]
+enum SessionState {
+    Listening,
+    Processing,
+}
+
+enum ControlMessage {
+    LlmFinished,
+    Sleep,
+}
+
+enum LoopEvent {
+    Ws(Result<Message, axum::Error>),
+    Stt(SttEvent),
+    Control(ControlMessage),
+}
+
+async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: AppState, device_id: String) {
     info!("WebSocket connection established with {} (Device: {})", addr, device_id);
 
     let mut current_session_id = String::new();
-    let mut is_listening = false;
-    let mut pcm_buffer: Vec<u8> = Vec::new();
-
-    // VAD State
-    let mut vad = VoiceActivityDetector::builder()
-        .sample_rate(16000)
-        .chunk_size(512usize) // 32ms at 16k
-        .build()
-        .expect("Failed to init VAD");
-
-    let mut silence_chunks = 0;
-    let silence_threshold = 20;
-    let mut has_spoken = false;
-    let mut vad_accumulator: Vec<f32> = Vec::new();
-    let vad_chunk_size = 512;
+    let mut accumulated_text = String::new();
 
     let mut opus_decoder = match OpusService::new_decoder() {
         Ok(d) => Some(d),
@@ -220,127 +332,237 @@ async fn handle_socket(mut socket: WebSocket, addr: SocketAddr, state: AppState,
     };
 
     let (mut sender, mut receiver) = socket.split();
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(128); // Increased buffer size
+    // 256 buffer
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(256);
 
     let mut writer_handle = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
+            if let Message::Text(text) = &msg {
+                info!("Writer: Sending text message: {}", text);
+            }
             if let Err(e) = sender.send(msg).await {
-                error!("Error sending message: {}", e);
+                // error!("Error sending message: {}", e);
                 break;
             }
         }
     });
 
-    while let Some(msg) = receiver.next().await {
-        let msg = match msg {
-            Ok(msg) => msg,
-            Err(e) => {
-                error!("Error receiving message from {}: {}", addr, e);
-                break;
-            }
-        };
+    let (stt_audio_tx, stt_audio_rx) = tokio::sync::mpsc::channel::<Vec<i16>>(256);
+    let (stt_event_tx, mut stt_event_rx) = tokio::sync::mpsc::channel::<SttEvent>(32);
 
-        match msg {
-            Message::Text(text) => {
-                info!("Received text message from {}: {}", addr, text);
-                match serde_json::from_str::<ClientMessage>(&text) {
-                    Ok(client_message) => {
-                         match client_message {
-                             ClientMessage::Hello { .. } => {
-                                 info!("Processing Hello message from {}", addr);
-                                 let response = ServerMessage::Hello {
-                                     transport: "websocket".to_string(),
-                                     audio_params: Some(AudioParamsResponse { sample_rate: 16000 }),
-                                 };
-                                 let response_text = serde_json::to_string(&response).unwrap();
-                                 let _ = tx.send(Message::Text(response_text.into())).await;
-                             },
-                             ClientMessage::Listen { session_id, state: listen_state, .. } => {
-                                 current_session_id = session_id.clone();
-                                 if listen_state == "start" {
-                                     info!("Client started listening. Session: {}", current_session_id);
-                                     is_listening = true;
-                                     pcm_buffer.clear();
-                                     vad_accumulator.clear();
-                                     has_spoken = false;
-                                     silence_chunks = 0;
-                                 } else if listen_state == "stop" {
-                                     info!("Client stopped listening. Session: {}", current_session_id);
-                                     is_listening = false;
-                                     trigger_pipeline(&state, &tx, &pcm_buffer, &device_id, state.history_limit).await;
-                                     pcm_buffer.clear();
-                                 }
-                             },
-                             ClientMessage::Abort { reason, .. } => {
-                                 info!("Client aborted: {}", reason);
-                                 is_listening = false;
-                                 pcm_buffer.clear();
-                             },
-                             ClientMessage::Iot { .. } => {
-                                 info!("Received IoT message");
-                             }
-                         }
-                    }
-                    Err(e) => {
-                        error!("Error deserializing message from {}: {}", addr, e);
-                    }
-                }
-            }
-            Message::Binary(bin) => {
-                if is_listening {
-                    if let Some(decoder) = opus_decoder.as_mut() {
-                        let mut output = vec![0i16; 5760];
-                        match decoder.decode(&bin, &mut output, false) {
-                            Ok(len) => {
-                                for sample in &output[..len] {
-                                    let s = *sample;
-                                    pcm_buffer.extend_from_slice(&s.to_le_bytes());
-
-                                    vad_accumulator.push(s as f32 / 32768.0);
-
-                                    while vad_accumulator.len() >= vad_chunk_size {
-                                        let chunk: Vec<f32> = vad_accumulator.drain(0..vad_chunk_size).collect();
-                                        let probability = vad.predict(chunk);
-
-                                        if probability > 0.5 {
-                                            has_spoken = true;
-                                            silence_chunks = 0;
-                                        } else {
-                                            if has_spoken {
-                                                silence_chunks += 1;
-                                            }
-                                        }
-
-                                        if has_spoken && silence_chunks > silence_threshold {
-                                            info!("VAD: Silence detected after speech. Triggering pipeline.");
-                                            is_listening = false;
-                                            trigger_pipeline(&state, &tx, &pcm_buffer, &device_id, state.history_limit).await;
-                                            pcm_buffer.clear();
-                                            vad_accumulator.clear();
-                                            has_spoken = false;
-                                            silence_chunks = 0;
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Opus decode error: {}", e);
+    let stt = state.stt.clone();
+    tokio::spawn(async move {
+        let input_stream = ReceiverStream::new(stt_audio_rx);
+        let boxed_input = Box::pin(input_stream);
+        match stt.stream_speech(boxed_input).await {
+            Ok(mut output_stream) => {
+                while let Some(res) = output_stream.next().await {
+                    match res {
+                        Ok(evt) => {
+                            if stt_event_tx.send(evt).await.is_err() {
+                                break;
                             }
                         }
+                        Err(e) => error!("STT Stream Error: {}", e),
                     }
                 }
             }
-            Message::Ping(_) => {
-                let _ = tx.send(Message::Pong(vec![].into())).await;
+            Err(e) => error!("Failed to start STT stream: {}", e),
+        }
+    });
+
+    let (llm_tx, mut llm_rx) = tokio::sync::mpsc::channel::<String>(16);
+    let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
+
+    let state_clone = state.clone();
+    let tx_clone = tx.clone();
+    let dev_id = device_id.clone();
+    let control_tx_llm = control_tx.clone();
+
+    tokio::spawn(async move {
+        while let Some(text) = llm_rx.recv().await {
+            let should_sleep = process_text_logic(&state_clone, &tx_clone, &text, &dev_id).await;
+            if should_sleep {
+                let _ = control_tx_llm.send(ControlMessage::Sleep).await;
+            } else {
+                let _ = control_tx_llm.send(ControlMessage::LlmFinished).await;
             }
-            Message::Pong(_) => {
+        }
+    });
+
+    let ws_stream = receiver.map(LoopEvent::Ws);
+    let stt_stream = ReceiverStream::new(stt_event_rx).map(LoopEvent::Stt);
+    let ctrl_stream = ReceiverStream::new(control_rx).map(LoopEvent::Control);
+
+    let streams: Vec<BoxStream<'static, LoopEvent>> = vec![
+        Box::pin(ws_stream),
+        Box::pin(stt_stream),
+        Box::pin(ctrl_stream),
+    ];
+    let mut all_events = select_all(streams);
+
+    let mut state_enum = SessionState::Listening;
+    let max_idle_duration = Duration::from_millis(state.config.chat.max_idle_duration);
+    let mut last_activity = Instant::now();
+    let mut is_standby = false;
+
+    loop {
+        let now = Instant::now();
+        let timeout_at = last_activity + max_idle_duration;
+        let sleep_duration = if state_enum == SessionState::Processing {
+            Duration::from_secs(3600 * 24)
+        } else if timeout_at > now {
+            timeout_at - now
+        } else {
+            Duration::from_millis(100)
+        };
+
+        tokio::select! {
+            event_opt = all_events.next() => {
+                match event_opt {
+                    Some(LoopEvent::Ws(res)) => {
+                        match res {
+                            Ok(msg) => {
+                                match msg {
+                                    Message::Text(text) => {
+                                        last_activity = Instant::now();
+                                        is_standby = false;
+                                        info!("Received text message: {}", text);
+                                        match serde_json::from_str::<ClientMessage>(&text) {
+                                            Ok(client_message) => {
+                                                 match client_message {
+                                                     ClientMessage::Hello { .. } => {
+                                                         let response = ServerMessage::Hello {
+                                                             transport: "websocket".to_string(),
+                                                             audio_params: Some(AudioParamsResponse {
+                                                                 sample_rate: 16000,
+                                                                 frame_duration: 60,
+                                                             }),
+                                                         };
+                                                         let _ = send_message_safe(&tx, Message::Text(serde_json::to_string(&response).unwrap().into())).await;
+                                                     },
+                                                     ClientMessage::Listen { session_id, state: listen_state, .. } => {
+                                                         current_session_id = session_id;
+                                                         if listen_state == "start" {
+                                                             info!("Client started listening.");
+                                                             state_enum = SessionState::Listening;
+                                                             accumulated_text.clear();
+                                                         } else if listen_state == "stop" {
+                                                             info!("Client stopped listening.");
+                                                             if !accumulated_text.is_empty() {
+                                                                 state_enum = SessionState::Processing;
+                                                                 let _ = llm_tx.send(accumulated_text.clone()).await;
+                                                                 accumulated_text.clear();
+                                                             } else {
+                                                                 state_enum = SessionState::Processing;
+                                                             }
+                                                         }
+                                                     },
+                                                     ClientMessage::Abort { reason, .. } => {
+                                                         info!("Client aborted: {}", reason);
+                                                         state_enum = SessionState::Listening;
+                                                         accumulated_text.clear();
+                                                     },
+                                                     ClientMessage::Iot { .. } => {
+                                                         info!("Received IoT message");
+                                                     }
+                                                 }
+                                            }
+                                            Err(e) => error!("Error deserializing message: {}", e),
+                                        }
+                                    }
+                                    Message::Binary(bin) => {
+                                        if state_enum == SessionState::Listening {
+                                            // Do NOT reset last_activity on audio packets!
+                                            is_standby = false;
+                                            if let Some(decoder) = opus_decoder.as_mut() {
+                                                let mut output = vec![0i16; 5760];
+                                                match decoder.decode(&bin, &mut output, false) {
+                                                    Ok(len) => {
+                                                        let pcm_chunk = output[..len].to_vec();
+                                                        let _ = stt_audio_tx.send(pcm_chunk).await;
+                                                    }
+                                                    Err(e) => error!("Opus decode error: {}", e),
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Message::Ping(_) => { let _ = send_message_safe(&tx, Message::Pong(vec![].into())).await; }
+                                    Message::Pong(_) => {}
+                                    Message::Close(_) => break,
+                                }
+                            },
+                            Err(e) => {
+                                error!("WS Error: {}", e);
+                                break;
+                            }
+                        }
+                    },
+                    Some(LoopEvent::Stt(evt)) => {
+                        match evt {
+                            SttEvent::Text(text) => {
+                                last_activity = Instant::now();
+                                is_standby = false;
+                                accumulated_text.push_str(&text);
+                                accumulated_text.push(' ');
+                                let stt_msg = ServerMessage::Stt { text: accumulated_text.clone() };
+                                let _ = send_message_safe(&tx, Message::Text(serde_json::to_string(&stt_msg).unwrap().into())).await;
+                            }
+                            SttEvent::NoSpeech => {
+                                if !accumulated_text.trim().is_empty() {
+                                    info!("STT NoSpeech. Triggering LLM.");
+                                    state_enum = SessionState::Processing;
+                                    let _ = llm_tx.send(accumulated_text.clone()).await;
+                                    accumulated_text.clear();
+                                }
+                            }
+                        }
+                    },
+                    Some(LoopEvent::Control(msg)) => {
+                        match msg {
+                            ControlMessage::LlmFinished => {
+                                info!("LLM Finished. Switching to Listening.");
+                                state_enum = SessionState::Listening;
+                                last_activity = Instant::now();
+                                is_standby = false;
+                            }
+                            ControlMessage::Sleep => {
+                                info!("Sleep requested. Closing.");
+                                let _ = send_message_safe(&tx, Message::Close(None)).await;
+                                break;
+                            }
+                        }
+                    },
+                    None => {
+                        info!("A stream ended (likely connection closed). Exiting loop.");
+                        break;
+                    }
+                }
             }
-            Message::Close(_) => {
-                info!("Connection closed by {}", addr);
-                break;
+
+            _ = tokio::time::sleep(sleep_duration) => {
+                 if !is_standby && state_enum != SessionState::Processing {
+                     info!("Idle timeout detected. Sending standby prompt.");
+                     is_standby = true;
+
+                     let state_clone = state.clone();
+                     let tx_clone = tx.clone();
+                     let prompt = state.config.chat.standby_prompt.clone();
+                     let control_tx_clone = control_tx.clone();
+
+                     tokio::spawn(async move {
+                         trigger_tts_only(&state_clone, &tx_clone, &prompt).await;
+                         // Signal completion to reset idle timer after speaking
+                         // Also for standby prompt, we want to Close connection as per user request
+                         // "Your timeout implementation is incorrect... should reply I'm going to rest, then disconnect WS"
+                         // So we send Sleep.
+                         let _ = control_tx_clone.send(ControlMessage::Sleep).await;
+                     });
+                 }
             }
         }
     }
 
     writer_handle.abort();
+    info!("WebSocket connection with {} closed.", addr);
 }

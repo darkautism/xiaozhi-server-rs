@@ -52,7 +52,7 @@ impl GeminiTts {
 
 #[async_trait]
 impl TtsTrait for GeminiTts {
-    async fn speak(&self, text: &str) -> anyhow::Result<Vec<Vec<u8>>> {
+    async fn speak(&self, text: &str, _emotion: Option<&str>) -> anyhow::Result<Vec<Vec<u8>>> {
         info!("Generating Gemini TTS for: '{}' using voice '{}'", text, self.voice_name);
 
         let url = format!(

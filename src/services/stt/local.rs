@@ -1,6 +1,7 @@
-use crate::traits::SttTrait;
+use crate::traits::{SttTrait, SttEvent};
 use async_trait::async_trait;
 use tracing::info;
+use futures_util::stream::BoxStream;
 
 pub struct LocalStt;
 
@@ -14,10 +15,13 @@ impl LocalStt {
 impl SttTrait for LocalStt {
     async fn recognize(&self, audio: &[u8]) -> anyhow::Result<String> {
         info!("TODO: Implement Opus decoding and Whisper STT. Received {} bytes.", audio.len());
-        // Mock response
-        // In a real loop, we would accumulate audio and eventually return text.
-        // For this mock, we assume the caller handles accumulation and trigger,
-        // or we just return a fixed string to prove the pipeline works.
         Ok("Hello Gemini".to_string())
+    }
+
+    async fn stream_speech(
+        &self,
+        _input_stream: BoxStream<'static, Vec<i16>>
+    ) -> anyhow::Result<BoxStream<'static, anyhow::Result<SttEvent>>> {
+        Err(anyhow::anyhow!("Streaming STT not implemented for LocalStt"))
     }
 }

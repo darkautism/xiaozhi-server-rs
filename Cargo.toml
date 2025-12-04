@@ -16,6 +16,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
 tokio-tungstenite = "0.21.0"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
@@ -24,12 +25,16 @@ uuid = { version = "1", features = ["v4"] }
 rand = { version = "0.9", features = ["std_rng"] }
 chrono = "0.4"
 anyhow = "1.0.100"
+async-stream = "0.3"
 async-trait = "0.1.89"
 reqwest = { version = "0.12", features = ["json", "stream"] }
-sensevoice-rs = "0.1.4"
+sensevoice-rs = { version = "0.1.5", features = ["stream"] }
 opus = { git = "https://github.com/darkautism/opus-rs", version = "0.3.0" }
 sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio", "macros"] }
 voice_activity_detector = "0.2.1"
 base64 = "0.22.1"
+msedge-tts = "0.2.4"
+minimp3 = "0.6.1"
+regex = "1"
 
 [dev-dependencies]

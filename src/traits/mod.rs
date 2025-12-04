@@ -1,5 +1,12 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use futures_util::stream::BoxStream;
+
+#[derive(Debug, Clone)]
+pub enum SttEvent {
+    Text(String),
+    NoSpeech,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -18,12 +25,19 @@ pub trait SttTrait: Send + Sync {
     // For this protocol, we might feed it chunks.
     // Simplified for now: assume we might process a chunk or a whole buffer.
     async fn recognize(&self, audio: &[u8]) -> anyhow::Result<String>;
+
+    // New streaming method
+    async fn stream_speech(
+        &self,
+        input_stream: BoxStream<'static, Vec<i16>>
+    ) -> anyhow::Result<BoxStream<'static, anyhow::Result<SttEvent>>>;
 }
 
 #[async_trait]
 pub trait TtsTrait: Send + Sync {
     // Returns a list of Opus encoded frames (each frame is a Vec<u8>)
-    async fn speak(&self, text: &str) -> anyhow::Result<Vec<Vec<u8>>>;
+    // emotion: Optional emotion string extracted from text (e.g. "happy", "sad")
+    async fn speak(&self, text: &str, emotion: Option<&str>) -> anyhow::Result<Vec<Vec<u8>>>;
 }
 
 #[async_trait]

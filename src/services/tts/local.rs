@@ -12,7 +12,7 @@ impl LocalTts {
 
 #[async_trait]
 impl TtsTrait for LocalTts {
-    async fn speak(&self, text: &str) -> anyhow::Result<Vec<Vec<u8>>> {
+    async fn speak(&self, text: &str, _emotion: Option<&str>) -> anyhow::Result<Vec<Vec<u8>>> {
         info!("TODO: Implement Text-to-Speech and Opus encoding for text: '{}'", text);
         // Mock response: valid Opus frame header or silence?
         // We will return a small dummy buffer.

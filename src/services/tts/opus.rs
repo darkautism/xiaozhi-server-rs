@@ -13,7 +13,7 @@ impl OpusTts {
 
 #[async_trait]
 impl TtsTrait for OpusTts {
-    async fn speak(&self, text: &str) -> anyhow::Result<Vec<Vec<u8>>> {
+    async fn speak(&self, text: &str, _emotion: Option<&str>) -> anyhow::Result<Vec<Vec<u8>>> {
         info!("Generating TTS for: '{}' (Mocking PCM -> Opus)", text);
 
         // 1. Generate Dummy PCM (Sine wave beep)
