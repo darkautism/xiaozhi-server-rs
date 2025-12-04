@@ -198,10 +198,10 @@ async fn process_text_logic(
              let mut total_frames = 0;
              let frame_duration = Duration::from_millis(60);
              let cache_frame_count = 2;
-             let start_time = Instant::now();
 
              match state.tts.speak(&clean_text, emotion.as_deref()).await {
                  Ok(frames) => {
+                     let start_time = Instant::now();
                      info!("Sending {} audio frames (paced)", frames.len());
                      for frame in frames {
                          // Flow control: Sliding window
@@ -220,14 +220,16 @@ async fn process_text_logic(
                          total_frames += 1;
                      }
                      info!("Finished sending audio frames");
+
+                     let total_duration = frame_duration * total_frames as u32;
+                     let elapsed = start_time.elapsed();
+                     if total_duration > elapsed {
+                         tokio::time::sleep(total_duration - elapsed).await;
+                     }
+                     // Ensure client buffer plays out
+                     tokio::time::sleep(Duration::from_millis(500)).await;
                  }
                  Err(e) => error!("TTS Error: {}", e),
-             }
-
-             let total_duration = frame_duration * total_frames as u32;
-             let elapsed = start_time.elapsed();
-             if total_duration > elapsed {
-                 tokio::time::sleep(total_duration - elapsed).await;
              }
 
              let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
@@ -266,10 +268,10 @@ async fn trigger_tts_only(
     let mut total_frames = 0;
     let frame_duration = Duration::from_millis(60);
     let cache_frame_count = 2;
-    let start_time = Instant::now();
 
     match state.tts.speak(text, None).await {
         Ok(frames) => {
+            let start_time = Instant::now();
             for frame in frames {
                 if total_frames >= cache_frame_count {
                     let target_time = start_time + frame_duration * (total_frames - cache_frame_count) as u32;
@@ -284,14 +286,14 @@ async fn trigger_tts_only(
                 }
                 total_frames += 1;
             }
+            let total_duration = frame_duration * total_frames as u32;
+            let elapsed = start_time.elapsed();
+            if total_duration > elapsed {
+                tokio::time::sleep(total_duration - elapsed).await;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
         Err(e) => error!("TTS Error: {}", e),
-    }
-
-    let total_duration = frame_duration * total_frames as u32;
-    let elapsed = start_time.elapsed();
-    if total_duration > elapsed {
-        tokio::time::sleep(total_duration - elapsed).await;
     }
 
     let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
@@ -471,7 +473,7 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                                     }
                                     Message::Binary(bin) => {
                                         if state_enum == SessionState::Listening {
-                                            last_activity = Instant::now();
+                                            // Do NOT reset last_activity on audio packets!
                                             is_standby = false;
                                             if let Some(decoder) = opus_decoder.as_mut() {
                                                 let mut output = vec![0i16; 5760];
@@ -562,4 +564,5 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
     }
 
     writer_handle.abort();
+    info!("WebSocket connection with {} closed.", addr);
 }
