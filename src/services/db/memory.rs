@@ -2,12 +2,12 @@ use crate::traits::{DbTrait, Message};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
-use std::time::{SystemTime, Duration};
+use std::time::{Duration, SystemTime};
 
 pub struct InMemoryDb {
     activated_devices: RwLock<HashSet<String>>,
     pending_challenges: RwLock<HashMap<String, (String, SystemTime)>>, // DeviceId -> (Challenge, Expiry)
-    chat_history: RwLock<HashMap<String, Vec<Message>>>, // DeviceId -> History
+    chat_history: RwLock<HashMap<String, Vec<Message>>>,               // DeviceId -> History
 }
 
 impl InMemoryDb {
@@ -36,11 +36,19 @@ impl DbTrait for InMemoryDb {
         Ok(())
     }
 
-    async fn add_challenge(&self, device_id: &str, challenge: &str, ttl_secs: u64) -> anyhow::Result<()> {
+    async fn add_challenge(
+        &self,
+        device_id: &str,
+        challenge: &str,
+        ttl_secs: u64,
+    ) -> anyhow::Result<()> {
         let mut challenges = self.pending_challenges.write().unwrap();
         challenges.insert(
             device_id.to_string(),
-            (challenge.to_string(), SystemTime::now() + Duration::from_secs(ttl_secs))
+            (
+                challenge.to_string(),
+                SystemTime::now() + Duration::from_secs(ttl_secs),
+            ),
         );
         Ok(())
     }
@@ -55,9 +63,16 @@ impl DbTrait for InMemoryDb {
         Ok(None)
     }
 
-    async fn add_chat_history(&self, device_id: &str, role: &str, content: &str) -> anyhow::Result<()> {
+    async fn add_chat_history(
+        &self,
+        device_id: &str,
+        role: &str,
+        content: &str,
+    ) -> anyhow::Result<()> {
         let mut history_db = self.chat_history.write().unwrap();
-        let history = history_db.entry(device_id.to_string()).or_insert_with(Vec::new);
+        let history = history_db
+            .entry(device_id.to_string())
+            .or_default();
         history.push(Message {
             role: role.to_string(),
             content: content.to_string(),
@@ -65,10 +80,18 @@ impl DbTrait for InMemoryDb {
         Ok(())
     }
 
-    async fn get_chat_history(&self, device_id: &str, limit: usize) -> anyhow::Result<Vec<Message>> {
+    async fn get_chat_history(
+        &self,
+        device_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<Message>> {
         let history_db = self.chat_history.read().unwrap();
         if let Some(history) = history_db.get(device_id) {
-            let start = if history.len() > limit { history.len() - limit } else { 0 };
+            let start = if history.len() > limit {
+                history.len() - limit
+            } else {
+                0
+            };
             Ok(history[start..].to_vec())
         } else {
             Ok(Vec::new())

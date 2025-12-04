@@ -1,12 +1,12 @@
-use std::sync::Arc;
 use crate::config::ServerConfig;
-use crate::traits::{LlmTrait, SttTrait, TtsTrait, DbTrait};
 use crate::services::{
+    db::{memory::InMemoryDb, sql::SqlDb},
     llm::gemini::GeminiLlm,
     stt::sensevoice::SenseVoiceStt,
-    tts::{opus::OpusTts, local::LocalTts, gemini::GeminiTts, edge::EdgeTts},
-    db::{memory::InMemoryDb, sql::SqlDb},
+    tts::{edge::EdgeTts, gemini::GeminiTts, opus::OpusTts},
 };
+use crate::traits::{DbTrait, LlmTrait, SttTrait, TtsTrait};
+use std::sync::Arc;
 use tracing::{info, warn};
 
 #[derive(Clone)]
@@ -37,7 +37,7 @@ impl AppState {
                         panic!("Failed to connect to SQL DB: {}", e);
                     }
                 }
-            },
+            }
             _ => Arc::new(InMemoryDb::new()),
         };
 
@@ -51,43 +51,46 @@ impl AppState {
 
         let tts: Arc<dyn TtsTrait + Send + Sync> = match config.tts.provider.as_str() {
             "edge" => {
-                 if let Some(edge_config) = &config.tts.edge {
-                     Arc::new(EdgeTts::new(
-                         edge_config.voice.clone(),
-                         edge_config.rate.clone(),
-                         edge_config.pitch.clone(),
-                         edge_config.volume.clone(),
-                     ))
-                 } else {
-                     warn!("Edge TTS selected but no specific config found. Using defaults.");
-                     Arc::new(EdgeTts::new(
-                         "zh-TW-HsiaoChenNeural".to_string(),
-                         "+0%".to_string(),
-                         "+0Hz".to_string(),
-                         "+0%".to_string(),
-                     ))
-                 }
-            },
+                if let Some(edge_config) = &config.tts.edge {
+                    Arc::new(EdgeTts::new(
+                        edge_config.voice.clone(),
+                        edge_config.rate.clone(),
+                        edge_config.pitch.clone(),
+                        edge_config.volume.clone(),
+                    ))
+                } else {
+                    warn!("Edge TTS selected but no specific config found. Using defaults.");
+                    Arc::new(EdgeTts::new(
+                        "zh-TW-HsiaoChenNeural".to_string(),
+                        "+0%".to_string(),
+                        "+0Hz".to_string(),
+                        "+0%".to_string(),
+                    ))
+                }
+            }
             "gemini" => {
                 if let Some(gemini_config) = &config.tts.gemini {
-                    let api_key = gemini_config.api_key.clone().unwrap_or_else(|| config.llm.api_key.clone());
+                    let api_key = gemini_config
+                        .api_key
+                        .clone()
+                        .unwrap_or_else(|| config.llm.api_key.clone());
                     Arc::new(GeminiTts::new(
                         api_key,
                         gemini_config.model.clone(),
-                        gemini_config.voice_name.clone()
+                        gemini_config.voice_name.clone(),
                     ))
                 } else {
                     // Fallback to defaults using LLM key if config missing
-                     warn!("Gemini TTS selected but no specific config found. Using defaults and LLM API key.");
-                     Arc::new(GeminiTts::new(
-                         config.llm.api_key.clone(),
-                         "gemini-2.5-flash-preview-tts".to_string(),
-                         "Kore".to_string()
-                     ))
+                    warn!("Gemini TTS selected but no specific config found. Using defaults and LLM API key.");
+                    Arc::new(GeminiTts::new(
+                        config.llm.api_key.clone(),
+                        "gemini-2.5-flash-preview-tts".to_string(),
+                        "Kore".to_string(),
+                    ))
                 }
-            },
+            }
             "opus" => Arc::new(OpusTts::new()),
-            "local" | _ => Arc::new(LocalTts::new()),
+            &_ => todo!(),
         };
 
         let history_limit = config.llm.history_limit;

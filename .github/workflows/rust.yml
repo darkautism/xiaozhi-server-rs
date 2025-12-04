@@ -1,0 +1,32 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - { name: x86_64, docker_platform: linux/amd64, target_triple: x86_64-unknown-linux-gnu }
+          - { name: arm64,   docker_platform: linux/arm64, target_triple: aarch64-unknown-linux-gnu }
+    steps:
+    - uses: actions/checkout@v6
+    - name: RustDoc
+      run: cargo doc --verbose
+    - name: fmt
+      run: cargo fmt --verbose
+    - name: Release
+      run: cargo build --release
+    - name: Upload files
+      uses: actions/upload-artifact@v4
+      with:
+        name: xiaozhi-server-linux-${{ matrix.target.name }}
+        path: target/release/

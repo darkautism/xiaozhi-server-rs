@@ -2,6 +2,7 @@
 name = "xiaozhi_server"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [patch.crates-io]
 cmake = { git = "https://github.com/reflectronic/cmake-rs.git", branch = "vs-18" }

@@ -1,11 +1,11 @@
-use crate::traits::TtsTrait;
-use async_trait::async_trait;
-use tracing::info;
-use anyhow::Context;
-use msedge_tts::tts::client::connect_async;
-use msedge_tts::tts::SpeechConfig;
 use crate::services::audio::opus_codec::OpusService;
 use crate::services::audio::resampler::resample_24k_to_16k;
+use crate::traits::TtsTrait;
+use anyhow::Context;
+use async_trait::async_trait;
+use msedge_tts::tts::client::connect_async;
+use msedge_tts::tts::SpeechConfig;
+use tracing::info;
 
 pub struct EdgeTts {
     voice: String,
@@ -28,31 +28,52 @@ impl EdgeTts {
 #[async_trait]
 impl TtsTrait for EdgeTts {
     async fn speak(&self, text: &str, _emotion: Option<&str>) -> anyhow::Result<Vec<Vec<u8>>> {
-        info!("Generating Edge TTS for: '{}' using voice '{}'", text, self.voice);
+        info!(
+            "Generating Edge TTS for: '{}' using voice '{}'",
+            text, self.voice
+        );
 
         // Connect to Edge TTS
-        let mut client = connect_async().await
+        let mut client = connect_async()
+            .await
             .context("Failed to connect to Edge TTS service")?;
 
-        let pitch = self.pitch.trim_matches(|c: char| !c.is_numeric() && c != '-').parse::<i32>().unwrap_or(0);
-        let rate = self.rate.trim_matches(|c: char| !c.is_numeric() && c != '-').parse::<i32>().unwrap_or(0);
-        let volume = self.volume.trim_matches(|c: char| !c.is_numeric() && c != '-').parse::<i32>().unwrap_or(0);
+        let pitch = self
+            .pitch
+            .trim_matches(|c: char| !c.is_numeric() && c != '-')
+            .parse::<i32>()
+            .unwrap_or(0);
+        let rate = self
+            .rate
+            .trim_matches(|c: char| !c.is_numeric() && c != '-')
+            .parse::<i32>()
+            .unwrap_or(0);
+        let volume = self
+            .volume
+            .trim_matches(|c: char| !c.is_numeric() && c != '-')
+            .parse::<i32>()
+            .unwrap_or(0);
 
         let config = SpeechConfig {
-             voice_name: self.voice.clone(),
-             pitch,
-             rate,
-             volume,
-             audio_format: "audio-24khz-48kbitrate-mono-mp3".to_string(),
+            voice_name: self.voice.clone(),
+            pitch,
+            rate,
+            volume,
+            audio_format: "audio-24khz-48kbitrate-mono-mp3".to_string(),
         };
 
         // Synthesize
-        let audio_metadata = client.synthesize(text, &config).await
+        let audio_metadata = client
+            .synthesize(text, &config)
+            .await
             .context("Failed to synthesize speech via Edge TTS")?;
 
         let audio_data = audio_metadata.audio_bytes;
 
-        info!("Received {} bytes of MP3 audio from Edge TTS", audio_data.len());
+        info!(
+            "Received {} bytes of MP3 audio from Edge TTS",
+            audio_data.len()
+        );
 
         let mut decoder = minimp3::Decoder::new(&audio_data[..]);
         let mut pcm_i16 = Vec::new();
@@ -61,23 +82,23 @@ impl TtsTrait for EdgeTts {
         loop {
             match decoder.next_frame() {
                 Ok(frame) => {
-                     if sample_rate == 0 {
-                         sample_rate = frame.sample_rate;
-                         info!("Edge TTS MP3 details: sample_rate={}, channels={}, layer={}, bitrate={}",
+                    if sample_rate == 0 {
+                        sample_rate = frame.sample_rate;
+                        info!("Edge TTS MP3 details: sample_rate={}, channels={}, layer={}, bitrate={}",
                                frame.sample_rate, frame.channels, frame.layer, frame.bitrate);
-                     }
+                    }
 
-                     if frame.channels == 1 {
-                         pcm_i16.extend_from_slice(&frame.data);
-                     } else {
-                         // Stereo to Mono: simple downsample (take left channel)
-                         for chunk in frame.data.chunks(frame.channels) {
-                             if let Some(&sample) = chunk.first() {
-                                 pcm_i16.push(sample);
-                             }
-                         }
-                     }
-                },
+                    if frame.channels == 1 {
+                        pcm_i16.extend_from_slice(&frame.data);
+                    } else {
+                        // Stereo to Mono: simple downsample (take left channel)
+                        for chunk in frame.data.chunks(frame.channels) {
+                            if let Some(&sample) = chunk.first() {
+                                pcm_i16.push(sample);
+                            }
+                        }
+                    }
+                }
                 Err(minimp3::Error::Eof) => break,
                 Err(e) => return Err(anyhow::anyhow!("MP3 decode error: {:?}", e)),
             }
@@ -91,7 +112,10 @@ impl TtsTrait for EdgeTts {
             info!("Sample rate is 24kHz, resampling to 16kHz.");
             resample_24k_to_16k(&pcm_i16)
         } else {
-            info!("Sample rate is {}, attempting 24k->16k resampling (may be incorrect).", sample_rate);
+            info!(
+                "Sample rate is {}, attempting 24k->16k resampling (may be incorrect).",
+                sample_rate
+            );
             resample_24k_to_16k(&pcm_i16)
         };
 
@@ -112,7 +136,11 @@ impl TtsTrait for EdgeTts {
         }
 
         let total_bytes: usize = frames.iter().map(|f| f.len()).sum();
-        info!("Encoded {} bytes of Opus audio into {} frames.", total_bytes, frames.len());
+        info!(
+            "Encoded {} bytes of Opus audio into {} frames.",
+            total_bytes,
+            frames.len()
+        );
         Ok(frames)
     }
 }

@@ -1,7 +1,5 @@
-use opus::{Decoder, Encoder, Channels, Application};
-use anyhow::{Result, Context};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use anyhow::{Context, Result};
+use opus::{Application, Channels, Decoder, Encoder};
 
 // OpusService handles encoding and decoding.
 // Since opus Encoders/Decoders are not thread-safe by default, we wrap them if needed,
@@ -27,7 +25,7 @@ impl OpusService {
 
         let mut decoder = Decoder::new(16000, Channels::Mono)?;
         let mut output = vec![0i16; 5760]; // Max frame size for 120ms at 48k, here at 16k 60ms is 960 samples.
-        // Let's alloc enough.
+                                           // Let's alloc enough.
 
         let len = decoder.decode(audio, &mut output, false)?;
         output.truncate(len);
@@ -40,6 +38,7 @@ impl OpusService {
     }
 
     pub fn new_encoder() -> Result<Encoder> {
-        Encoder::new(16000, Channels::Mono, Application::Voip).context("Failed to create Opus encoder")
+        Encoder::new(16000, Channels::Mono, Application::Voip)
+            .context("Failed to create Opus encoder")
     }
 }

@@ -1,9 +1,9 @@
 use crate::traits::{LlmTrait, Message};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
-use tracing::info;
 use serde_json::{json, Value};
-use anyhow::{Context, Result};
+use tracing::info;
 
 pub struct GeminiLlm {
     api_key: String,
@@ -32,12 +32,15 @@ impl LlmTrait for GeminiLlm {
         );
 
         // Map internal Message to Gemini Content format
-        let contents: Vec<Value> = messages.iter().map(|msg| {
-            json!({
-                "role": msg.role,
-                "parts": [{ "text": msg.content }]
+        let contents: Vec<Value> = messages
+            .iter()
+            .map(|msg| {
+                json!({
+                    "role": msg.role,
+                    "parts": [{ "text": msg.content }]
+                })
             })
-        }).collect();
+            .collect();
 
         let mut body = json!({
             "contents": contents
@@ -51,7 +54,9 @@ impl LlmTrait for GeminiLlm {
         }
 
         info!("Sending request to Gemini model: {}", self.model);
-        let resp = self.client.post(&url)
+        let resp = self
+            .client
+            .post(&url)
             .json(&body)
             .timeout(std::time::Duration::from_secs(30))
             .send()
@@ -64,7 +69,10 @@ impl LlmTrait for GeminiLlm {
             return Err(anyhow::anyhow!("Gemini API error: {}", error_text));
         }
 
-        let json: Value = resp.json().await.context("Failed to parse Gemini response")?;
+        let json: Value = resp
+            .json()
+            .await
+            .context("Failed to parse Gemini response")?;
 
         // Extract text from response structure: candidates[0].content.parts[0].text
         let content = json["candidates"][0]["content"]["parts"][0]["text"]
