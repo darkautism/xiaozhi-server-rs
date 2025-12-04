@@ -45,16 +45,54 @@ pub struct MqttConfig {
 #[derive(Debug, Deserialize)]
 pub struct LlmSettings {
     pub provider: String,
-    pub api_key: String,
-    #[serde(default = "default_llm_model")]
-    pub model: String,
     #[serde(default = "default_history_limit")]
     pub history_limit: usize,
     pub system_instruction: Option<String>,
+    #[serde(default)]
+    pub gemini: Option<GeminiConfig>,
+    #[serde(default)]
+    pub openai: Option<OpenAiConfig>,
+    #[serde(default)]
+    pub ollama: Option<OllamaConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct GeminiConfig {
+    pub api_key: String,
+    #[serde(default = "default_llm_model")]
+    pub model: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct OpenAiConfig {
+    pub api_key: String,
+    #[serde(default = "default_openai_model")]
+    pub model: String,
+    pub base_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct OllamaConfig {
+    #[serde(default = "default_ollama_model")]
+    pub model: String,
+    #[serde(default = "default_ollama_base_url")]
+    pub base_url: String,
 }
 
 fn default_llm_model() -> String {
-    "gemini-3-pro-preview".to_string()
+    "gemini-2.0-flash-lite".to_string()
+}
+
+fn default_openai_model() -> String {
+    "gpt-4o-mini".to_string()
+}
+
+fn default_ollama_model() -> String {
+    "llama3.1".to_string()
+}
+
+fn default_ollama_base_url() -> String {
+    "http://localhost:11434/v1".to_string()
 }
 
 fn default_history_limit() -> usize {

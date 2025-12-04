@@ -14,7 +14,9 @@ This is a personal server-side implementation of the Xiaozhi bot, designed to pr
 - **Speech-to-Text (STT):**  
   - **SenseVoice** (default): A high-accuracy speech recognition model running locally via `sensevoice-rs`.
 - **Large Language Model (LLM):**  
-  - **Google Gemini:** Supports multi-turn conversations and context awareness.
+  - **Google Gemini:**
+  - **OpenAI:**
+  - **Ollama:**
 - **Text-to-Speech (TTS):**  
   - **Microsoft Edge TTS** (default): Uses `msedge-tts` to provide natural and free speech synthesis.  
   - **Google Gemini TTS:** Uses Gemini’s voice generation capability. High latency; not recommended.  

@@ -1,7 +1,7 @@
 use crate::config::ServerConfig;
 use crate::services::{
     db::{memory::InMemoryDb, sql::SqlDb},
-    llm::gemini::GeminiLlm,
+    llm::{gemini::GeminiLlm, ollama::OllamaLlm, openai::OpenAiLlm},
     stt::sensevoice::SenseVoiceStt,
     tts::{edge::EdgeTts, gemini::GeminiTts, opus::OpusTts},
 };
@@ -41,11 +41,51 @@ impl AppState {
             _ => Arc::new(InMemoryDb::new()),
         };
 
-        let llm = Arc::new(GeminiLlm::new(
-            config.llm.api_key.clone(),
-            config.llm.model.clone(),
-            config.llm.system_instruction.clone(),
-        ));
+        let system_instruction = config.llm.system_instruction.clone();
+
+        let llm: Arc<dyn LlmTrait + Send + Sync> = match config.llm.provider.as_str() {
+            "gemini" => {
+                if let Some(gemini_conf) = &config.llm.gemini {
+                    Arc::new(GeminiLlm::new(
+                        gemini_conf.api_key.clone(),
+                        gemini_conf.model.clone(),
+                        system_instruction,
+                    ))
+                } else {
+                    // Fallback using top level (if present, but now discouraged) or defaults
+                    // The old structure had api_key at top level, but new structure doesn't.
+                    // This branch might panic if config is missing, but config loading should ensure validity or we handle it here.
+                    // Given the migration, we assume valid config.
+                    panic!("Gemini provider selected but [llm.gemini] config missing.");
+                }
+            }
+            "openai" => {
+                if let Some(openai_conf) = &config.llm.openai {
+                    Arc::new(OpenAiLlm::new(
+                        openai_conf.api_key.clone(),
+                        openai_conf.model.clone(),
+                        system_instruction,
+                        openai_conf.base_url.clone(),
+                    ))
+                } else {
+                     panic!("OpenAI provider selected but [llm.openai] config missing.");
+                }
+            }
+            "ollama" => {
+                if let Some(ollama_conf) = &config.llm.ollama {
+                    Arc::new(OllamaLlm::new(
+                        ollama_conf.model.clone(),
+                        system_instruction,
+                        ollama_conf.base_url.clone(),
+                    ))
+                } else {
+                    panic!("Ollama provider selected but [llm.ollama] config missing.");
+                }
+            }
+            provider => {
+                panic!("Unknown LLM provider: {}", provider);
+            }
+        };
 
         let stt = Arc::new(SenseVoiceStt::new(config.vad.clone()));
 
@@ -73,20 +113,19 @@ impl AppState {
                     let api_key = gemini_config
                         .api_key
                         .clone()
-                        .unwrap_or_else(|| config.llm.api_key.clone());
+                        .or_else(|| {
+                            // Try to get key from llm.gemini if available
+                             config.llm.gemini.as_ref().map(|g| g.api_key.clone())
+                        })
+                        .expect("Gemini TTS requires an API key in [tts.gemini] or [llm.gemini]");
+                        
                     Arc::new(GeminiTts::new(
                         api_key,
                         gemini_config.model.clone(),
                         gemini_config.voice_name.clone(),
                     ))
                 } else {
-                    // Fallback to defaults using LLM key if config missing
-                    warn!("Gemini TTS selected but no specific config found. Using defaults and LLM API key.");
-                    Arc::new(GeminiTts::new(
-                        config.llm.api_key.clone(),
-                        "gemini-2.5-flash-preview-tts".to_string(),
-                        "Kore".to_string(),
-                    ))
+                    panic!("Gemini TTS selected but [tts.gemini] config missing.");
                 }
             }
             "opus" => Arc::new(OpusTts::new()),
