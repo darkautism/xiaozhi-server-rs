@@ -80,9 +80,9 @@ This is a personal server-side implementation of the Xiaozhi bot, designed to pr
 
 ---
 
-## Configuration (Settings.toml)
+## Configuration (settings.toml)
 
-The main configuration file is `Settings.toml` in the project root. Modify as needed:
+The main configuration file is `settings.toml` in the project root. Modify as needed:
 
 ```toml
 [server]

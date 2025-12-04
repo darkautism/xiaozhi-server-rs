@@ -1,0 +1,49 @@
+[server]
+port = 8002
+host = "0.0.0.0"
+
+[auth]
+enable = false
+signature_key = "secret_key_for_hmac"
+
+[ota]
+firmware_version = "0.9.9"
+
+[ota.mqtt]
+enable = false
+endpoint = "ssl://mqtt.example.com:8883"
+
+[llm]
+provider = "gemini"
+api_key = "Key"
+model = "gemini-2.5-flash-lite"
+history_limit = 5
+system_instruction = "你是一個智慧音箱，請強制使用繁體中文（Traditional Chinese）與使用者交談。回復請避免過長思考與長篇大論，且避免類似書面語、論文、文檔形式的發言。請用類似人類的隨意語法發言。當使用者表達想讓你休息、停止或閉嘴時，請禮貌回復自己將暫離或休息，並在句尾加上 [SLEEP] 標籤。"
+
+[vad]
+silence_duration_ms = 2500
+
+[chat]
+max_idle_duration = 30000
+standby_prompt = "我先去休息了，有需要再叫我。"
+
+[stt]
+provider = "sensevoice"
+
+[tts]
+provider = "edge"
+
+[tts.edge]
+voice = "zh-TW-HsiaoChenNeural"
+rate = "+0%"
+pitch = "+0Hz"
+volume = "+0%"
+
+[tts.gemini]
+# api_key = "Optional if different from llm"
+model = "gemini-2.5-flash-preview-tts"
+voice_name = "Kore"
+
+[db]
+type = "memory"
+# url = "sqlite://xiaozhi.db"
