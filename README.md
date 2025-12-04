@@ -1,4 +1,4 @@
-### Xiaozhi Server (小智伺服器)
+# Xiaozhi Server (小智伺服器)
 
 [English](README.md)  
 [中文](README.zh-TW.md)
@@ -9,7 +9,7 @@ This is a personal server-side implementation of the Xiaozhi bot, designed to pr
 
 ---
 
-### Features
+## Features
 
 - **Speech-to-Text (STT):**  
   - **SenseVoice** (default): A high-accuracy speech recognition model running locally via `sensevoice-rs`.
@@ -24,7 +24,7 @@ This is a personal server-side implementation of the Xiaozhi bot, designed to pr
 
 ---
 
-### System Requirements
+## System Requirements
 
 - **Operating System:** Linux (recommended) or Windows  
 - **Rust:** Version 1.75 or newer  
@@ -32,9 +32,9 @@ This is a personal server-side implementation of the Xiaozhi bot, designed to pr
 
 ---
 
-### Installation Guide
+## Installation Guide
 
-#### Linux
+### Linux
 
 1. **Install build tools:**
     ```bash
@@ -65,7 +65,7 @@ This is a personal server-side implementation of the Xiaozhi bot, designed to pr
     cargo run --release
     ```
 
-#### Windows
+### Windows
 
 1. **Install Rust:** Download and install from [rust-lang.org](https://www.rust-lang.org/).  
 2. **Download ONNX Runtime:**  
@@ -80,7 +80,7 @@ This is a personal server-side implementation of the Xiaozhi bot, designed to pr
 
 ---
 
-### Configuration (Settings.toml)
+## Configuration (Settings.toml)
 
 The main configuration file is `Settings.toml` in the project root. Modify as needed:
 
@@ -122,6 +122,6 @@ silence_duration_ms = 2500      # Silence detection threshold (milliseconds)
 
 ---
 
-### LICENSE
+## LICENSE
 
 MIT
