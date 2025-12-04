@@ -1,7 +1,7 @@
 use crate::traits::{DbTrait, Message};
 use async_trait::async_trait;
 use sqlx::sqlite::SqlitePool;
-use sqlx::{Pool, Sqlite, Row};
+use sqlx::{Pool, Row, Sqlite};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct SqlDb {
@@ -36,7 +36,7 @@ impl SqlDb {
                 created_at INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_chat_history_device_id ON chat_history(device_id);
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await?;
@@ -47,10 +47,11 @@ impl SqlDb {
 #[async_trait]
 impl DbTrait for SqlDb {
     async fn is_activated(&self, device_id: &str) -> anyhow::Result<bool> {
-        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM activated_devices WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_one(&self.pool)
-            .await?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM activated_devices WHERE device_id = ?")
+                .bind(device_id)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(count > 0)
     }
 
@@ -72,14 +73,20 @@ impl DbTrait for SqlDb {
         Ok(())
     }
 
-    async fn add_challenge(&self, device_id: &str, challenge: &str, ttl_secs: u64) -> anyhow::Result<()> {
+    async fn add_challenge(
+        &self,
+        device_id: &str,
+        challenge: &str,
+        ttl_secs: u64,
+    ) -> anyhow::Result<()> {
         let expiry = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() + ttl_secs;
+            .as_secs()
+            + ttl_secs;
 
         sqlx::query(
-            "INSERT OR REPLACE INTO challenges (device_id, challenge, expiry) VALUES (?, ?, ?)"
+            "INSERT OR REPLACE INTO challenges (device_id, challenge, expiry) VALUES (?, ?, ?)",
         )
         .bind(device_id)
         .bind(challenge)
@@ -95,12 +102,11 @@ impl DbTrait for SqlDb {
             .unwrap()
             .as_secs() as i64;
 
-        let result: Option<(String, i64)> = sqlx::query_as(
-            "SELECT challenge, expiry FROM challenges WHERE device_id = ?"
-        )
-        .bind(device_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let result: Option<(String, i64)> =
+            sqlx::query_as("SELECT challenge, expiry FROM challenges WHERE device_id = ?")
+                .bind(device_id)
+                .fetch_optional(&self.pool)
+                .await?;
 
         if let Some((challenge, expiry)) = result {
             if now < expiry {
@@ -115,14 +121,19 @@ impl DbTrait for SqlDb {
         Ok(None)
     }
 
-    async fn add_chat_history(&self, device_id: &str, role: &str, content: &str) -> anyhow::Result<()> {
+    async fn add_chat_history(
+        &self,
+        device_id: &str,
+        role: &str,
+        content: &str,
+    ) -> anyhow::Result<()> {
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
 
         sqlx::query(
-            "INSERT INTO chat_history (device_id, role, content, created_at) VALUES (?, ?, ?, ?)"
+            "INSERT INTO chat_history (device_id, role, content, created_at) VALUES (?, ?, ?, ?)",
         )
         .bind(device_id)
         .bind(role)
@@ -133,7 +144,11 @@ impl DbTrait for SqlDb {
         Ok(())
     }
 
-    async fn get_chat_history(&self, device_id: &str, limit: usize) -> anyhow::Result<Vec<Message>> {
+    async fn get_chat_history(
+        &self,
+        device_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<Message>> {
         // Fetch recent messages. Since we need them in chronological order,
         // we sort by created_at DESC, limit, then reverse.
         // Or using subquery.
@@ -146,7 +161,7 @@ impl DbTrait for SqlDb {
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
             ) ORDER BY created_at ASC, id ASC
-            "#
+            "#,
         )
         .bind(device_id)
         .bind(limit as i64)

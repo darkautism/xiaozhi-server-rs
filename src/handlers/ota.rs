@@ -1,18 +1,26 @@
 use axum::{
-    extract::{State, Request},
+    extract::{Request, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json},
 };
 use std::time::SystemTime;
 // use uuid::Uuid; // Unused
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use hex;
+use hmac::{Hmac, Mac};
 use rand::{distr::Alphanumeric, Rng};
+use sha2::Sha256;
 
-use crate::state::AppState;
 use crate::handlers::ota_types::*;
+use crate::state::AppState;
 
+/// Handles OTA (Over-The-Air) update requests from the device.
+///
+/// This endpoint provides the device with:
+/// - WebSocket connection details (URL, token).
+/// - MQTT connection details (if enabled).
+/// - Server time synchronization.
+/// - Firmware update information.
+/// - Activation status/challenge if authentication is enabled.
 pub async fn handle_ota(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -34,25 +42,25 @@ pub async fn handle_ota(
         let is_activated = state.db.is_activated(&device_id).await.unwrap_or(false);
 
         if !is_activated {
-             // Generate Challenge
-             let challenge: String = rand::rng()
-                 .sample_iter(&Alphanumeric)
-                 .take(32)
-                 .map(char::from)
-                 .collect();
+            // Generate Challenge
+            let challenge: String = rand::rng()
+                .sample_iter(&Alphanumeric)
+                .take(32)
+                .map(char::from)
+                .collect();
 
-             // Add challenge to DB
-             // Ignore errors for now or log them
-             if let Err(e) = state.db.add_challenge(&device_id, &challenge, 300).await {
-                 tracing::error!("Failed to save challenge: {}", e);
-             }
+            // Add challenge to DB
+            // Ignore errors for now or log them
+            if let Err(e) = state.db.add_challenge(&device_id, &challenge, 300).await {
+                tracing::error!("Failed to save challenge: {}", e);
+            }
 
-             activation_info = Some(ActivationInfo {
-                 code: "0".to_string(), // Placeholder
-                 message: "Device not activated".to_string(),
-                 challenge,
-                 timeout_ms: 300000,
-             });
+            activation_info = Some(ActivationInfo {
+                code: "0".to_string(), // Placeholder
+                message: "Device not activated".to_string(),
+                challenge,
+                timeout_ms: 300000,
+            });
         }
     }
 
@@ -63,7 +71,8 @@ pub async fn handle_ota(
         url.clone()
     } else {
         // Construct dynamic URL from Host header
-        let host = headers.get("Host")
+        let host = headers
+            .get("Host")
             .and_then(|h| h.to_str().ok())
             .unwrap_or("localhost:8002"); // Fallback
         format!("ws://{}/xiaozhi/v1/", host)
@@ -77,7 +86,8 @@ pub async fn handle_ota(
         let signature_key = &state.config.auth.signature_key;
         let password_raw = format!("{}:{}:{}", device_id, client_id, signature_key);
         // Simple hash for password
-        let mut mac = Hmac::<Sha256>::new_from_slice(signature_key.as_bytes()).expect("HMAC can take key of any size");
+        let mut mac = Hmac::<Sha256>::new_from_slice(signature_key.as_bytes())
+            .expect("HMAC can take key of any size");
         mac.update(password_raw.as_bytes());
         let result = mac.finalize();
         let password = hex::encode(result.into_bytes());
@@ -101,7 +111,10 @@ pub async fn handle_ota(
         },
         mqtt: mqtt_info,
         server_time: ServerTimeInfo {
-            timestamp: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as i64,
+            timestamp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64,
             timezone_offset: 480, // UTC+8
             time_zone: "Asia/Shanghai".to_string(),
         },
@@ -118,6 +131,10 @@ pub async fn handle_ota(
     Json(response).into_response()
 }
 
+/// Handles device activation requests.
+///
+/// The device sends a signature of the challenge received in the `handle_ota` response.
+/// If the signature matches the expected HMAC-SHA256 signature, the device is marked as activated.
 pub async fn handle_ota_activate(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -129,35 +146,47 @@ pub async fn handle_ota_activate(
     };
 
     if req.payload.algorithm != "hmac-sha256" {
-         return (StatusCode::BAD_REQUEST, "Unsupported algorithm").into_response();
+        return (StatusCode::BAD_REQUEST, "Unsupported algorithm").into_response();
     }
 
     // Find the challenge we issued for this device
     let stored_challenge = match state.db.get_challenge(&device_id).await {
         Ok(Some(c)) => c,
-        Ok(None) => return (StatusCode::FORBIDDEN, "No pending challenge or expired").into_response(),
+        Ok(None) => {
+            return (StatusCode::FORBIDDEN, "No pending challenge or expired").into_response()
+        }
         Err(e) => {
             tracing::error!("DB Error: {}", e);
             return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
         }
     };
 
-    let signature_to_verify = req.payload.signature.clone().or(req.payload.digest.clone()).unwrap_or_default();
+    let signature_to_verify = req
+        .payload
+        .signature
+        .clone()
+        .or(req.payload.digest.clone())
+        .unwrap_or_default();
 
     let secret_key = &state.config.auth.signature_key;
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret_key.as_bytes()).expect("HMAC can take key of any size");
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret_key.as_bytes())
+        .expect("HMAC can take key of any size");
     mac.update(stored_challenge.as_bytes());
     let expected_signature_bytes = mac.finalize().into_bytes();
     let expected_signature = hex::encode(expected_signature_bytes);
 
     if signature_to_verify == expected_signature {
         if let Err(e) = state.db.activate_device(&device_id).await {
-             tracing::error!("Failed to activate device: {}", e);
-             return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
+            tracing::error!("Failed to activate device: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
         }
         (StatusCode::OK, "Activation successful").into_response()
     } else {
-        tracing::warn!("Signature mismatch. Expected: {}, Got: {}", expected_signature, signature_to_verify);
+        tracing::warn!(
+            "Signature mismatch. Expected: {}, Got: {}",
+            expected_signature,
+            signature_to_verify
+        );
         (StatusCode::ACCEPTED, "Device verification failed").into_response()
     }
 }

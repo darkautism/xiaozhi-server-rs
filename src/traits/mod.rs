@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use futures_util::stream::BoxStream;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub enum SttEvent {
@@ -29,7 +29,7 @@ pub trait SttTrait: Send + Sync {
     // New streaming method
     async fn stream_speech(
         &self,
-        input_stream: BoxStream<'static, Vec<i16>>
+        input_stream: BoxStream<'static, Vec<i16>>,
     ) -> anyhow::Result<BoxStream<'static, anyhow::Result<SttEvent>>>;
 }
 
@@ -44,9 +44,20 @@ pub trait TtsTrait: Send + Sync {
 pub trait DbTrait: Send + Sync {
     async fn is_activated(&self, device_id: &str) -> anyhow::Result<bool>;
     async fn activate_device(&self, device_id: &str) -> anyhow::Result<()>;
-    async fn add_challenge(&self, device_id: &str, challenge: &str, ttl_secs: u64) -> anyhow::Result<()>;
+    async fn add_challenge(
+        &self,
+        device_id: &str,
+        challenge: &str,
+        ttl_secs: u64,
+    ) -> anyhow::Result<()>;
     async fn get_challenge(&self, device_id: &str) -> anyhow::Result<Option<String>>;
 
-    async fn add_chat_history(&self, device_id: &str, role: &str, content: &str) -> anyhow::Result<()>;
-    async fn get_chat_history(&self, device_id: &str, limit: usize) -> anyhow::Result<Vec<Message>>;
+    async fn add_chat_history(
+        &self,
+        device_id: &str,
+        role: &str,
+        content: &str,
+    ) -> anyhow::Result<()>;
+    async fn get_chat_history(&self, device_id: &str, limit: usize)
+        -> anyhow::Result<Vec<Message>>;
 }

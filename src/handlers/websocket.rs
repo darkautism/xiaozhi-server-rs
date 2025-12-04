@@ -1,20 +1,23 @@
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State, ConnectInfo},
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        ConnectInfo, State,
+    },
     http::HeaderMap,
     response::IntoResponse,
 };
-use std::net::SocketAddr;
-use futures_util::{stream::StreamExt, SinkExt, stream::select_all, stream::BoxStream};
-use serde_json::{json, Value};
-use tracing::{info, warn, error, debug};
-use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
-use tokio_stream::wrappers::ReceiverStream;
-use tokio::time::{Instant, Duration};
+use futures_util::{stream::select_all, stream::BoxStream, stream::StreamExt, SinkExt};
 use regex::Regex;
+use serde_json::Value;
+use std::net::SocketAddr;
+use std::sync::OnceLock;
+use tokio::sync::mpsc::Sender;
+use tokio::time::{Duration, Instant};
+use tokio_stream::wrappers::ReceiverStream;
+use tracing::{debug, error, info, warn};
 
-use crate::state::AppState;
 use crate::services::audio::opus_codec::OpusService;
+use crate::state::AppState;
 use crate::traits::SttEvent;
 
 use serde::{Deserialize, Serialize};
@@ -90,9 +93,12 @@ pub enum ServerMessage {
     },
     Iot {
         commands: Vec<Value>,
-    }
+    },
 }
 
+/// Upgrades the HTTP connection to a WebSocket connection.
+///
+/// This is the main entry point for the real-time audio/text interaction with the Xiaozhi device.
 pub async fn handle_websocket(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
@@ -102,7 +108,8 @@ pub async fn handle_websocket(
     info!("WebSocket handshake attempt from {}", addr);
     debug!("WebSocket handshake headers: {:?}", headers);
 
-    let device_id = headers.get("x-device-id")
+    let device_id = headers
+        .get("x-device-id")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("unknown_device")
         .to_string();
@@ -111,18 +118,22 @@ pub async fn handle_websocket(
 }
 
 fn clean_text_and_extract_emotion(text: &str) -> (String, Option<String>) {
-    let re = Regex::new(r"\p{Emoji_Presentation}").unwrap();
+    static EMOJI_REGEX: OnceLock<Regex> = OnceLock::new();
+    let re =
+        EMOJI_REGEX.get_or_init(|| Regex::new(r"\p{Emoji_Presentation}").expect("Invalid Regex"));
     let cleaned = re.replace_all(text, "").to_string();
 
-    let emotion = if text.contains('😂') || text.contains('😊') || text.contains('哈') || text.contains('嘻') {
-        Some("happy".to_string())
-    } else if text.contains('😭') || text.contains('😢') || text.contains('难') {
-        Some("sad".to_string())
-    } else if text.contains('😡') || text.contains('怒') {
-        Some("angry".to_string())
-    } else {
-        None
-    };
+    let emotion =
+        if text.contains('😂') || text.contains('😊') || text.contains('哈') || text.contains('嘻')
+        {
+            Some("happy".to_string())
+        } else if text.contains('😭') || text.contains('😢') || text.contains('难') {
+            Some("sad".to_string())
+        } else if text.contains('😡') || text.contains('怒') {
+            Some("angry".to_string())
+        } else {
+            None
+        };
 
     (cleaned, emotion)
 }
@@ -134,7 +145,7 @@ async fn send_message_safe(tx: &Sender<Message>, msg: Message) -> bool {
         Ok(Err(e)) => {
             error!("Failed to send message: {}", e);
             false
-        },
+        }
         Err(_) => {
             error!("Failed to send message: Timeout (Writer blocked)");
             false
@@ -149,121 +160,176 @@ async fn process_text_logic(
     text: &str,
     device_id: &str,
 ) -> bool {
-     if text.trim().is_empty() {
-         return false;
-     }
+    if text.trim().is_empty() {
+        return false;
+    }
 
-     info!("Processing text: {}", text);
+    info!("Processing text: {}", text);
 
-     let mut messages = match state.db.get_chat_history(device_id, state.history_limit).await {
-         Ok(h) => h,
-         Err(e) => {
-             error!("Failed to fetch chat history: {}", e);
-             Vec::new()
-         }
-     };
+    let mut messages = match state
+        .db
+        .get_chat_history(device_id, state.history_limit)
+        .await
+    {
+        Ok(h) => h,
+        Err(e) => {
+            error!("Failed to fetch chat history: {}", e);
+            Vec::new()
+        }
+    };
 
-     messages.push(crate::traits::Message {
-         role: "user".to_string(),
-         content: text.to_string(),
-     });
+    messages.push(crate::traits::Message {
+        role: "user".to_string(),
+        content: text.to_string(),
+    });
 
-     match state.llm.chat(messages).await {
-         Ok(response_text) => {
-             info!("LLM Response: {}", response_text);
+    match state.llm.chat(messages).await {
+        Ok(response_text) => {
+            info!("LLM Response: {}", response_text);
 
-             let should_sleep = response_text.contains("[SLEEP]");
-             let raw_response = response_text.replace("[SLEEP]", "").trim().to_string();
+            let should_sleep = response_text.contains("[SLEEP]");
+            let raw_response = response_text.replace("[SLEEP]", "").trim().to_string();
 
-             let (clean_text, emotion) = clean_text_and_extract_emotion(&raw_response);
+            let (clean_text, emotion) = clean_text_and_extract_emotion(&raw_response);
 
-             let llm_msg = ServerMessage::Llm {
-                 emotion: emotion.clone().or(Some("happy".to_string())),
-                 text: Some(clean_text.clone())
-             };
-             if !send_message_safe(tx, Message::Text(serde_json::to_string(&llm_msg).unwrap().into())).await { return false; }
+            let llm_msg = ServerMessage::Llm {
+                emotion: emotion.clone().or(Some("happy".to_string())),
+                text: Some(clean_text.clone()),
+            };
+            if !send_message_safe(
+                tx,
+                Message::Text(serde_json::to_string(&llm_msg).expect("Serialize failed").into()),
+            )
+            .await
+            {
+                return false;
+            }
 
-             let _ = state.db.add_chat_history(device_id, "user", text).await;
-             let _ = state.db.add_chat_history(device_id, "model", &clean_text).await;
+            let _ = state.db.add_chat_history(device_id, "user", text).await;
+            let _ = state
+                .db
+                .add_chat_history(device_id, "model", &clean_text)
+                .await;
 
-             let tts_start = ServerMessage::Tts { state: "start".to_string(), text: None };
-             if !send_message_safe(tx, Message::Text(serde_json::to_string(&tts_start).unwrap().into())).await { return false; }
+            let tts_start = ServerMessage::Tts {
+                state: "start".to_string(),
+                text: None,
+            };
+            if !send_message_safe(
+                tx,
+                Message::Text(serde_json::to_string(&tts_start).expect("Serialize failed").into()),
+            )
+            .await
+            {
+                return false;
+            }
 
-             let tts_sentence = ServerMessage::Tts {
-                 state: "sentence_start".to_string(),
-                 text: Some(clean_text.clone())
-             };
-             if !send_message_safe(tx, Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await { return false; }
+            let tts_sentence = ServerMessage::Tts {
+                state: "sentence_start".to_string(),
+                text: Some(clean_text.clone()),
+            };
+            if !send_message_safe(
+                tx,
+                Message::Text(serde_json::to_string(&tts_sentence).expect("Serialize failed").into()),
+            )
+            .await
+            {
+                return false;
+            }
 
-             let mut total_frames = 0;
-             let frame_duration = Duration::from_millis(60);
-             let cache_frame_count = 2;
+            let mut total_frames = 0;
+            let frame_duration = Duration::from_millis(60);
+            let cache_frame_count = 2;
 
-             match state.tts.speak(&clean_text, emotion.as_deref()).await {
-                 Ok(frames) => {
-                     let start_time = Instant::now();
-                     info!("Sending {} audio frames (paced)", frames.len());
-                     for frame in frames {
-                         // Flow control: Sliding window
-                         if total_frames >= cache_frame_count {
-                             let target_time = start_time + frame_duration * (total_frames - cache_frame_count) as u32;
-                             let now = Instant::now();
-                             if target_time > now {
-                                 tokio::time::sleep(target_time - now).await;
-                             }
-                         }
+            match state.tts.speak(&clean_text, emotion.as_deref()).await {
+                Ok(frames) => {
+                    let start_time = Instant::now();
+                    info!("Sending {} audio frames (paced)", frames.len());
+                    for frame in frames {
+                        // Flow control: Sliding window
+                        if total_frames >= cache_frame_count {
+                            let target_time = start_time
+                                + frame_duration * (total_frames - cache_frame_count) as u32;
+                            let now = Instant::now();
+                            if target_time > now {
+                                tokio::time::sleep(target_time - now).await;
+                            }
+                        }
 
-                         if !send_message_safe(tx, Message::Binary(frame.into())).await {
-                             warn!("Failed to send audio frame");
-                             return false; // Abort
-                         }
-                         total_frames += 1;
-                     }
-                     info!("Finished sending audio frames");
+                        if !send_message_safe(tx, Message::Binary(frame.into())).await {
+                            warn!("Failed to send audio frame");
+                            return false; // Abort
+                        }
+                        total_frames += 1;
+                    }
+                    info!("Finished sending audio frames");
 
-                     let total_duration = frame_duration * total_frames as u32;
-                     let elapsed = start_time.elapsed();
-                     if total_duration > elapsed {
-                         tokio::time::sleep(total_duration - elapsed).await;
-                     }
-                     // Ensure client buffer plays out
-                     tokio::time::sleep(Duration::from_millis(500)).await;
-                 }
-                 Err(e) => error!("TTS Error: {}", e),
-             }
+                    let total_duration = frame_duration * total_frames as u32;
+                    let elapsed = start_time.elapsed();
+                    if total_duration > elapsed {
+                        tokio::time::sleep(total_duration - elapsed).await;
+                    }
+                    // Ensure client buffer plays out
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+                Err(e) => error!("TTS Error: {}", e),
+            }
 
-             let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
-             if !send_message_safe(tx, Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await { return false; }
-             info!("Sent TTS Stop command");
+            let tts_stop = ServerMessage::Tts {
+                state: "stop".to_string(),
+                text: None,
+            };
+            if !send_message_safe(
+                tx,
+                Message::Text(serde_json::to_string(&tts_stop).expect("Serialize failed").into()),
+            )
+            .await
+            {
+                return false;
+            }
+            info!("Sent TTS Stop command");
 
-             if should_sleep {
-                 info!("LLM requested sleep. Closing connection.");
-                 tokio::time::sleep(Duration::from_secs(1)).await;
-             }
+            if should_sleep {
+                info!("LLM requested sleep. Closing connection.");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
 
-             return should_sleep;
-         }
-         Err(e) => {
-             error!("LLM Error: {}", e);
-             return false;
-         }
-     }
+            should_sleep
+        }
+        Err(e) => {
+            error!("LLM Error: {}", e);
+            false
+        }
+    }
 }
 
-async fn trigger_tts_only(
-    state: &AppState,
-    tx: &Sender<Message>,
-    text: &str,
-) {
+async fn trigger_tts_only(state: &AppState, tx: &Sender<Message>, text: &str) {
     info!("Triggering TTS only: {}", text);
-    let tts_start = ServerMessage::Tts { state: "start".to_string(), text: None };
-    if !send_message_safe(tx, Message::Text(serde_json::to_string(&tts_start).unwrap().into())).await { return; }
+    let tts_start = ServerMessage::Tts {
+        state: "start".to_string(),
+        text: None,
+    };
+    if !send_message_safe(
+        tx,
+        Message::Text(serde_json::to_string(&tts_start).expect("Serialize failed").into()),
+    )
+    .await
+    {
+        return;
+    }
 
     let tts_sentence = ServerMessage::Tts {
         state: "sentence_start".to_string(),
-        text: Some(text.to_string())
+        text: Some(text.to_string()),
     };
-    if !send_message_safe(tx, Message::Text(serde_json::to_string(&tts_sentence).unwrap().into())).await { return; }
+    if !send_message_safe(
+        tx,
+        Message::Text(serde_json::to_string(&tts_sentence).expect("Serialize failed").into()),
+    )
+    .await
+    {
+        return;
+    }
 
     let mut total_frames = 0;
     let frame_duration = Duration::from_millis(60);
@@ -274,7 +340,8 @@ async fn trigger_tts_only(
             let start_time = Instant::now();
             for frame in frames {
                 if total_frames >= cache_frame_count {
-                    let target_time = start_time + frame_duration * (total_frames - cache_frame_count) as u32;
+                    let target_time =
+                        start_time + frame_duration * (total_frames - cache_frame_count) as u32;
                     let now = Instant::now();
                     if target_time > now {
                         tokio::time::sleep(target_time - now).await;
@@ -296,8 +363,15 @@ async fn trigger_tts_only(
         Err(e) => error!("TTS Error: {}", e),
     }
 
-    let tts_stop = ServerMessage::Tts { state: "stop".to_string(), text: None };
-    let _ = send_message_safe(tx, Message::Text(serde_json::to_string(&tts_stop).unwrap().into())).await;
+    let tts_stop = ServerMessage::Tts {
+        state: "stop".to_string(),
+        text: None,
+    };
+    let _ = send_message_safe(
+        tx,
+        Message::Text(serde_json::to_string(&tts_stop).expect("Serialize failed").into()),
+    )
+    .await;
 }
 
 #[derive(PartialEq)]
@@ -317,8 +391,16 @@ enum LoopEvent {
     Control(ControlMessage),
 }
 
-async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: AppState, device_id: String) {
-    info!("WebSocket connection established with {} (Device: {})", addr, device_id);
+async fn handle_socket_inner(
+    socket: WebSocket,
+    addr: SocketAddr,
+    state: AppState,
+    device_id: String,
+) {
+    info!(
+        "WebSocket connection established with {} (Device: {})",
+        addr, device_id
+    );
 
     let mut current_session_id = String::new();
     let mut accumulated_text = String::new();
@@ -331,11 +413,11 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
         }
     };
 
-    let (mut sender, mut receiver) = socket.split();
+    let (mut sender, receiver) = socket.split();
     // 256 buffer
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(256);
 
-    let mut writer_handle = tokio::spawn(async move {
+    let writer_handle = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if let Message::Text(text) = &msg {
                 info!("Writer: Sending text message: {}", text);
@@ -348,7 +430,7 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
     });
 
     let (stt_audio_tx, stt_audio_rx) = tokio::sync::mpsc::channel::<Vec<i16>>(256);
-    let (stt_event_tx, mut stt_event_rx) = tokio::sync::mpsc::channel::<SttEvent>(32);
+    let (stt_event_tx, stt_event_rx) = tokio::sync::mpsc::channel::<SttEvent>(32);
 
     let stt = state.stt.clone();
     tokio::spawn(async move {
@@ -372,7 +454,7 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
     });
 
     let (llm_tx, mut llm_rx) = tokio::sync::mpsc::channel::<String>(16);
-    let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
+    let (control_tx, control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
 
     let state_clone = state.clone();
     let tx_clone = tx.clone();
@@ -439,7 +521,7 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                                                                  frame_duration: 60,
                                                              }),
                                                          };
-                                                         let _ = send_message_safe(&tx, Message::Text(serde_json::to_string(&response).unwrap().into())).await;
+                                                         let _ = send_message_safe(&tx, Message::Text(serde_json::to_string(&response).expect("Serialize failed").into())).await;
                                                      },
                                                      ClientMessage::Listen { session_id, state: listen_state, .. } => {
                                                          current_session_id = session_id;
@@ -506,7 +588,7 @@ async fn handle_socket_inner(mut socket: WebSocket, addr: SocketAddr, state: App
                                 accumulated_text.push_str(&text);
                                 accumulated_text.push(' ');
                                 let stt_msg = ServerMessage::Stt { text: accumulated_text.clone() };
-                                let _ = send_message_safe(&tx, Message::Text(serde_json::to_string(&stt_msg).unwrap().into())).await;
+                                let _ = send_message_safe(&tx, Message::Text(serde_json::to_string(&stt_msg).expect("Serialize failed").into())).await;
                             }
                             SttEvent::NoSpeech => {
                                 if !accumulated_text.trim().is_empty() {

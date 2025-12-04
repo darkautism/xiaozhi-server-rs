@@ -1,15 +1,15 @@
+use crate::services::audio::opus_codec::OpusService;
 use crate::traits::TtsTrait;
+use anyhow::Context;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::json;
-use tracing::{info, error};
-use anyhow::Context;
-use crate::services::audio::opus_codec::OpusService;
+use tracing::{error, info};
 
 pub struct GeminiTts {
     api_key: String,
     client: Client,
-    model: String, // e.g. "gemini-2.5-flash-preview-tts"
+    model: String,      // e.g. "gemini-2.5-flash-preview-tts"
     voice_name: String, // e.g. "Kore"
 }
 
@@ -53,7 +53,10 @@ impl GeminiTts {
 #[async_trait]
 impl TtsTrait for GeminiTts {
     async fn speak(&self, text: &str, _emotion: Option<&str>) -> anyhow::Result<Vec<Vec<u8>>> {
-        info!("Generating Gemini TTS for: '{}' using voice '{}'", text, self.voice_name);
+        info!(
+            "Generating Gemini TTS for: '{}' using voice '{}'",
+            text, self.voice_name
+        );
 
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
@@ -78,7 +81,9 @@ impl TtsTrait for GeminiTts {
             }
         });
 
-        let resp = self.client.post(&url)
+        let resp = self
+            .client
+            .post(&url)
             .json(&body)
             .send()
             .await
@@ -90,19 +95,25 @@ impl TtsTrait for GeminiTts {
             return Err(anyhow::anyhow!("Gemini TTS API error: {}", error_text));
         }
 
-        let json_resp: serde_json::Value = resp.json().await.context("Failed to parse Gemini TTS response")?;
+        let json_resp: serde_json::Value = resp
+            .json()
+            .await
+            .context("Failed to parse Gemini TTS response")?;
 
         // Extract base64 audio data
         let encoded_audio = json_resp["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]
             .as_str()
             .context("Invalid response format from Gemini TTS (missing inlineData.data)")?;
 
-        use base64::{Engine as _, engine::general_purpose};
+        use base64::{engine::general_purpose, Engine as _};
         let audio_data = general_purpose::STANDARD
             .decode(encoded_audio)
             .context("Failed to decode base64 audio data")?;
 
-        info!("Received {} bytes of raw audio from Gemini TTS", audio_data.len());
+        info!(
+            "Received {} bytes of raw audio from Gemini TTS",
+            audio_data.len()
+        );
 
         // Convert u8 bytes to i16 PCM (assuming Little Endian)
         let mut pcm_i16: Vec<i16> = Vec::with_capacity(audio_data.len() / 2);
@@ -137,7 +148,11 @@ impl TtsTrait for GeminiTts {
         }
 
         let total_bytes: usize = frames.iter().map(|f| f.len()).sum();
-        info!("Encoded {} bytes of Opus audio into {} frames.", total_bytes, frames.len());
+        info!(
+            "Encoded {} bytes of Opus audio into {} frames.",
+            total_bytes,
+            frames.len()
+        );
         Ok(frames)
     }
 }

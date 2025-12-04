@@ -1,7 +1,7 @@
+use crate::services::audio::opus_codec::OpusService;
 use crate::traits::TtsTrait;
 use async_trait::async_trait;
-use tracing::{info, error};
-use crate::services::audio::opus_codec::OpusService;
+use tracing::info;
 
 pub struct OpusTts;
 
@@ -25,7 +25,8 @@ impl TtsTrait for OpusTts {
 
         let mut pcm = Vec::with_capacity(samples_count);
         for t in 0..samples_count {
-            let sample = (t as f32 * frequency * 2.0 * std::f32::consts::PI / sample_rate as f32).sin();
+            let sample =
+                (t as f32 * frequency * 2.0 * std::f32::consts::PI / sample_rate as f32).sin();
             let sample_i16 = (sample * 10000.0) as i16;
             pcm.push(sample_i16);
         }
@@ -40,13 +41,13 @@ impl TtsTrait for OpusTts {
 
         for chunk in pcm.chunks(frame_size) {
             if chunk.len() < frame_size {
-                 let mut padded = chunk.to_vec();
-                 padded.resize(frame_size, 0);
-                 let encoded = encoder.encode_vec(&padded, frame_size * 2)?;
-                 frames.push(encoded);
+                let mut padded = chunk.to_vec();
+                padded.resize(frame_size, 0);
+                let encoded = encoder.encode_vec(&padded, frame_size * 2)?;
+                frames.push(encoded);
             } else {
-                 let encoded = encoder.encode_vec(chunk, frame_size * 2)?;
-                 frames.push(encoded);
+                let encoded = encoder.encode_vec(chunk, frame_size * 2)?;
+                frames.push(encoded);
             }
         }
 
