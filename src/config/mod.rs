@@ -10,6 +10,10 @@ pub struct ServerConfig {
     pub tts: TtsSettings,
     #[serde(default)]
     pub db: DbSettings,
+    #[serde(default)]
+    pub vad: VadSettings,
+    #[serde(default)]
+    pub chat: ChatSettings,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,6 +71,8 @@ pub struct TtsSettings {
     pub provider: String,
     #[serde(default)]
     pub gemini: Option<GeminiTtsConfig>,
+    #[serde(default)]
+    pub edge: Option<EdgeTtsConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,12 +84,40 @@ pub struct GeminiTtsConfig {
     pub voice_name: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EdgeTtsConfig {
+    #[serde(default = "default_edge_voice")]
+    pub voice: String,
+    #[serde(default = "default_edge_rate")]
+    pub rate: String,
+    #[serde(default = "default_edge_pitch")]
+    pub pitch: String,
+    #[serde(default = "default_edge_volume")]
+    pub volume: String,
+}
+
 fn default_tts_model() -> String {
     "gemini-2.5-flash-preview-tts".to_string()
 }
 
 fn default_tts_voice() -> String {
     "Kore".to_string()
+}
+
+fn default_edge_voice() -> String {
+    "zh-TW-HsiaoChenNeural".to_string()
+}
+
+fn default_edge_rate() -> String {
+    "+0%".to_string()
+}
+
+fn default_edge_pitch() -> String {
+    "+0Hz".to_string()
+}
+
+fn default_edge_volume() -> String {
+    "+0%".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +139,32 @@ impl Default for DbSettings {
             url: default_db_url(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct VadSettings {
+    #[serde(default = "default_silence_duration")]
+    pub silence_duration_ms: u32,
+}
+
+fn default_silence_duration() -> u32 {
+    2500
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct ChatSettings {
+    #[serde(default = "default_max_idle_duration")]
+    pub max_idle_duration: u64,
+    #[serde(default = "default_standby_prompt")]
+    pub standby_prompt: String,
+}
+
+fn default_max_idle_duration() -> u64 {
+    30000
+}
+
+fn default_standby_prompt() -> String {
+    "我先去休息了，有需要再叫我。".to_string()
 }
 
 impl ServerConfig {

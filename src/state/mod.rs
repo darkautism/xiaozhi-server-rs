@@ -4,7 +4,7 @@ use crate::traits::{LlmTrait, SttTrait, TtsTrait, DbTrait};
 use crate::services::{
     llm::gemini::GeminiLlm,
     stt::sensevoice::SenseVoiceStt,
-    tts::{opus::OpusTts, local::LocalTts, gemini::GeminiTts},
+    tts::{opus::OpusTts, local::LocalTts, gemini::GeminiTts, edge::EdgeTts},
     db::{memory::InMemoryDb, sql::SqlDb},
 };
 use tracing::{info, warn};
@@ -47,9 +47,27 @@ impl AppState {
             config.llm.system_instruction.clone(),
         ));
 
-        let stt = Arc::new(SenseVoiceStt::new());
+        let stt = Arc::new(SenseVoiceStt::new(config.vad.clone()));
 
         let tts: Arc<dyn TtsTrait + Send + Sync> = match config.tts.provider.as_str() {
+            "edge" => {
+                 if let Some(edge_config) = &config.tts.edge {
+                     Arc::new(EdgeTts::new(
+                         edge_config.voice.clone(),
+                         edge_config.rate.clone(),
+                         edge_config.pitch.clone(),
+                         edge_config.volume.clone(),
+                     ))
+                 } else {
+                     warn!("Edge TTS selected but no specific config found. Using defaults.");
+                     Arc::new(EdgeTts::new(
+                         "zh-TW-HsiaoChenNeural".to_string(),
+                         "+0%".to_string(),
+                         "+0Hz".to_string(),
+                         "+0%".to_string(),
+                     ))
+                 }
+            },
             "gemini" => {
                 if let Some(gemini_config) = &config.tts.gemini {
                     let api_key = gemini_config.api_key.clone().unwrap_or_else(|| config.llm.api_key.clone());

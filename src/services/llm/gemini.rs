@@ -1,6 +1,7 @@
 use crate::traits::{LlmTrait, Message};
 use async_trait::async_trait;
 use reqwest::Client;
+use tracing::info;
 use serde_json::{json, Value};
 use anyhow::{Context, Result};
 
@@ -49,11 +50,14 @@ impl LlmTrait for GeminiLlm {
             });
         }
 
+        info!("Sending request to Gemini model: {}", self.model);
         let resp = self.client.post(&url)
             .json(&body)
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .context("Failed to send request to Gemini")?;
+        info!("Gemini response status: {}", resp.status());
 
         if !resp.status().is_success() {
             let error_text = resp.text().await.unwrap_or_default();
