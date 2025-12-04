@@ -10,7 +10,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build-linux:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
@@ -26,4 +26,27 @@ jobs:
         name: xiaozhi-server-linux-arm64
         path: |
           target/release/xiaozhi_server
+          settings.toml
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Build
+      run: cargo build --release
+    - name: Download OnnxRuntime
+      run: |
+        Invoke-WebRequest -Uri "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip" -OutFile "onnxruntime.zip"
+        Expand-Archive -Path "onnxruntime.zip" -DestinationPath "onnxruntime"
+    - name: Prepare Artifacts
+      run: |
+        $dll = Get-ChildItem -Path "onnxruntime" -Recurse -Filter "onnxruntime.dll" | Select-Object -First 1
+        Copy-Item $dll.FullName -Destination "target/release/"
+    - name: Upload files
+      uses: actions/upload-artifact@v5
+      with:
+        name: xiaozhi-server-windows-x64
+        path: |
+          target/release/xiaozhi_server.exe
+          target/release/onnxruntime.dll
           settings.toml
