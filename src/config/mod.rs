@@ -170,7 +170,7 @@ fn default_standby_prompt() -> String {
 impl ServerConfig {
     pub fn new() -> Result<Self, config::ConfigError> {
         let builder = config::Config::builder()
-            .add_source(config::File::with_name("Settings.toml").required(false))
+            .add_source(config::File::with_name("settings.toml").required(false))
             .add_source(config::Environment::with_prefix("XIAOZHI").separator("__"));
 
         builder.build()?.try_deserialize()

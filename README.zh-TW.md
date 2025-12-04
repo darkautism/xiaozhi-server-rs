@@ -74,9 +74,9 @@
     cargo run --release
     ```
 
-## 配置說明 (Settings.toml)
+## 配置說明 (settings.toml)
 
-專案根目錄下的 `Settings.toml` 為主要設定檔。請依據需求修改：
+專案根目錄下的 `settings.toml` 為主要設定檔。請依據需求修改：
 
 ```toml
 [server]
