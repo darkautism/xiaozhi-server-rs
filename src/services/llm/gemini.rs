@@ -1,3 +1,4 @@
+use crate::services::llm::TECH_INSTRUCTION;
 use crate::traits::{LlmTrait, Message};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -14,11 +15,17 @@ pub struct GeminiLlm {
 
 impl GeminiLlm {
     pub fn new(api_key: String, model: String, system_instruction: Option<String>) -> Self {
+        // Merge user instruction with shared technical instruction
+        let final_instruction = match system_instruction {
+            Some(user_inst) => format!("{} {}", user_inst, TECH_INSTRUCTION),
+            None => TECH_INSTRUCTION.to_string(),
+        };
+
         Self {
             api_key,
             client: Client::new(),
             model,
-            system_instruction,
+            system_instruction: Some(final_instruction),
         }
     }
 }
