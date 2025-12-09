@@ -47,7 +47,7 @@ impl LlmTrait for GeminiLlm {
             .iter()
             .map(|msg| {
                 let role = if msg.role == "assistant" { "model" } else if msg.role == "tool" { "function" } else { &msg.role };
-                
+
                 // If it's a tool response (role "tool" in OpenAI, "function" in Gemini)
                 if role == "function" {
                      json!({
@@ -60,7 +60,6 @@ impl LlmTrait for GeminiLlm {
                                 // If we don't store the function name in history for tool results, Gemini might complain.
                                 // For now, let's assume tool_call_id holds the name, or we need to fix Message struct to store tool name.
                                 // But let's look at standard OpenAI tool usage: tool_call_id matches the call.
-                                
                                 // Actually, for Gemini, the "role" is "function" and part is "functionResponse".
                                 // { "functionResponse": { "name": "...", "response": { ... } } }
                                 "response": { "content": msg.content } 
@@ -104,13 +103,16 @@ impl LlmTrait for GeminiLlm {
 
         if let Some(tools) = tools {
             if !tools.is_empty() {
-                let gemini_tools: Vec<Value> = tools.iter().map(|t| {
-                    json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters // Gemini supports standard JSON schema in 'parameters'
+                let gemini_tools: Vec<Value> = tools
+                    .iter()
+                    .map(|t| {
+                        json!({
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters // Gemini supports standard JSON schema in 'parameters'
+                        })
                     })
-                }).collect();
+                    .collect();
 
                 body["tools"] = json!([{
                     "function_declarations": gemini_tools
@@ -119,7 +121,10 @@ impl LlmTrait for GeminiLlm {
         }
 
         info!("Sending request to Gemini model: {}", self.model);
-        tracing::debug!("[LLM DUMP] Request Body: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+        tracing::debug!(
+            "[LLM DUMP] Request Body: {}",
+            serde_json::to_string_pretty(&body).unwrap_or_default()
+        );
 
         let resp = self
             .client
@@ -141,11 +146,14 @@ impl LlmTrait for GeminiLlm {
             .await
             .context("Failed to parse Gemini response")?;
 
-        tracing::debug!("[LLM DUMP] Response Body: {}", serde_json::to_string_pretty(&json).unwrap_or_default());
+        tracing::debug!(
+            "[LLM DUMP] Response Body: {}",
+            serde_json::to_string_pretty(&json).unwrap_or_default()
+        );
 
         let candidate = &json["candidates"][0];
         let parts = &candidate["content"]["parts"];
-        
+
         if let Some(parts_array) = parts.as_array() {
             // Check for function calls
             let mut tool_calls = Vec::new();
@@ -161,7 +169,7 @@ impl LlmTrait for GeminiLlm {
                         function: crate::traits::ToolFunction {
                             name,
                             arguments: args.to_string(),
-                        }
+                        },
                     });
                 }
                 if let Some(text) = part.get("text") {

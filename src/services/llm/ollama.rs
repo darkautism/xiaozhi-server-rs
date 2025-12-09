@@ -14,11 +14,7 @@ pub struct OllamaLlm {
 }
 
 impl OllamaLlm {
-    pub fn new(
-        model: String,
-        system_instruction: Option<String>,
-        base_url: String,
-    ) -> Self {
+    pub fn new(model: String, system_instruction: Option<String>, base_url: String) -> Self {
         // Merge user instruction with shared technical instruction
         let final_instruction = match system_instruction {
             Some(user_inst) => format!("{} {}", user_inst, TECH_INSTRUCTION),
@@ -62,8 +58,8 @@ impl LlmTrait for OllamaLlm {
                 "role": msg.role,
                 "content": msg.content
             });
-             if !msg.tool_calls.is_empty() {
-                 json_msg["tool_calls"] = serde_json::to_value(&msg.tool_calls).unwrap();
+            if !msg.tool_calls.is_empty() {
+                json_msg["tool_calls"] = serde_json::to_value(&msg.tool_calls).unwrap();
             }
             if let Some(tool_call_id) = &msg.tool_call_id {
                 json_msg["tool_call_id"] = json!(tool_call_id);
@@ -74,7 +70,7 @@ impl LlmTrait for OllamaLlm {
         let mut body = json!({
             "model": self.model,
             "messages": request_messages,
-            "stream": false 
+            "stream": false
         });
 
         if let Some(tools) = tools {
@@ -96,9 +92,15 @@ impl LlmTrait for OllamaLlm {
             }
         }
 
-        info!("Sending request to Ollama model: {} at {}", self.model, self.base_url);
-        tracing::debug!("[LLM DUMP] Request Body: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
-        
+        info!(
+            "Sending request to Ollama model: {} at {}",
+            self.model, self.base_url
+        );
+        tracing::debug!(
+            "[LLM DUMP] Request Body: {}",
+            serde_json::to_string_pretty(&body).unwrap_or_default()
+        );
+
         // Ollama doesn't typically require an API key
         let resp = self
             .client
@@ -108,7 +110,7 @@ impl LlmTrait for OllamaLlm {
             .send()
             .await
             .context("Failed to send request to Ollama")?;
-            
+
         info!("Ollama response status: {}", resp.status());
 
         if !resp.status().is_success() {
@@ -121,7 +123,10 @@ impl LlmTrait for OllamaLlm {
             .await
             .context("Failed to parse Ollama response")?;
 
-        tracing::debug!("[LLM DUMP] Response Body: {}", serde_json::to_string_pretty(&json).unwrap_or_default());
+        tracing::debug!(
+            "[LLM DUMP] Response Body: {}",
+            serde_json::to_string_pretty(&json).unwrap_or_default()
+        );
 
         let choice = &json["choices"][0];
         let message = &choice["message"];
@@ -129,21 +134,18 @@ impl LlmTrait for OllamaLlm {
         // Check for tool calls
         if let Some(tool_calls_json) = message.get("tool_calls") {
             if let Some(tool_calls_array) = tool_calls_json.as_array() {
-                 let mut calls = Vec::new();
-                 for tc in tool_calls_array {
-                     calls.push(serde_json::from_value(tc.clone())?);
-                 }
-                 if !calls.is_empty() {
-                     return Ok(ChatResponse::ToolCall(calls));
-                 }
+                let mut calls = Vec::new();
+                for tc in tool_calls_array {
+                    calls.push(serde_json::from_value(tc.clone())?);
+                }
+                if !calls.is_empty() {
+                    return Ok(ChatResponse::ToolCall(calls));
+                }
             }
         }
 
         // Extract text
-        let content = message["content"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let content = message["content"].as_str().unwrap_or("").to_string();
 
         Ok(ChatResponse::Text(content))
     }

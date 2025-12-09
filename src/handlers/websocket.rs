@@ -177,10 +177,10 @@ fn send_nowait(tx: &Sender<Message>, msg: Message) -> bool {
         Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
             warn!("Outbound buffer full, dropping message to avoid blocking loop.");
             false
-        },
+        }
         Err(e) => {
-             error!("Outbound channel closed: {}", e);
-             false
+            error!("Outbound channel closed: {}", e);
+            false
         }
     }
 }
@@ -224,8 +224,8 @@ async fn process_text_logic(
 
     loop {
         if loop_count >= MAX_LOOPS {
-             error!("Too many tool loops. Breaking.");
-             return false;
+            error!("Too many tool loops. Breaking.");
+            return false;
         }
         loop_count += 1;
 
@@ -249,7 +249,11 @@ async fn process_text_logic(
                             };
                             if !send_message_safe(
                                 tx,
-                                Message::Text(serde_json::to_string(&llm_msg).expect("Serialize failed").into()),
+                                Message::Text(
+                                    serde_json::to_string(&llm_msg)
+                                        .expect("Serialize failed")
+                                        .into(),
+                                ),
                             )
                             .await
                             {
@@ -268,7 +272,11 @@ async fn process_text_logic(
                             };
                             if !send_message_safe(
                                 tx,
-                                Message::Text(serde_json::to_string(&tts_start).expect("Serialize failed").into()),
+                                Message::Text(
+                                    serde_json::to_string(&tts_start)
+                                        .expect("Serialize failed")
+                                        .into(),
+                                ),
                             )
                             .await
                             {
@@ -281,7 +289,11 @@ async fn process_text_logic(
                             };
                             if !send_message_safe(
                                 tx,
-                                Message::Text(serde_json::to_string(&tts_sentence).expect("Serialize failed").into()),
+                                Message::Text(
+                                    serde_json::to_string(&tts_sentence)
+                                        .expect("Serialize failed")
+                                        .into(),
+                                ),
                             )
                             .await
                             {
@@ -300,14 +312,17 @@ async fn process_text_logic(
                                         // Flow control: Sliding window
                                         if total_frames >= cache_frame_count {
                                             let target_time = start_time
-                                                + frame_duration * (total_frames - cache_frame_count) as u32;
+                                                + frame_duration
+                                                    * (total_frames - cache_frame_count) as u32;
                                             let now = Instant::now();
                                             if target_time > now {
                                                 tokio::time::sleep(target_time - now).await;
                                             }
                                         }
 
-                                        if !send_message_safe(tx, Message::Binary(frame.into())).await {
+                                        if !send_message_safe(tx, Message::Binary(frame.into()))
+                                            .await
+                                        {
                                             warn!("Failed to send audio frame");
                                             return false; // Abort
                                         }
@@ -332,7 +347,11 @@ async fn process_text_logic(
                             };
                             if !send_message_safe(
                                 tx,
-                                Message::Text(serde_json::to_string(&tts_stop).expect("Serialize failed").into()),
+                                Message::Text(
+                                    serde_json::to_string(&tts_stop)
+                                        .expect("Serialize failed")
+                                        .into(),
+                                ),
                             )
                             .await
                             {
@@ -351,7 +370,7 @@ async fn process_text_logic(
                     }
                     ChatResponse::ToolCall(tool_calls) => {
                         info!("LLM requested tool calls: {:?}", tool_calls);
-                        
+
                         // Append the assistant's tool call message to history
                         messages.push(crate::traits::Message {
                             role: "assistant".to_string(),
@@ -362,8 +381,11 @@ async fn process_text_logic(
 
                         for call in tool_calls {
                             let (resp_tx, resp_rx) = oneshot::channel();
-                            
-                            debug!("[MCP CALL] Requesting tool execution: {}", call.function.name);
+
+                            debug!(
+                                "[MCP CALL] Requesting tool execution: {}",
+                                call.function.name
+                            );
                             // Send execution request to Main Loop
                             if let Err(e) = mcp_rpc_tx.send(RpcCall {
                                 method: "tools/call".to_string(),
@@ -384,21 +406,23 @@ async fn process_text_logic(
                                     error!("Tool execution error: {}", e);
                                     // Should we feed error back to LLM? Yes.
                                     json!({ "error": e })
-                                },
+                                }
                                 Err(_) => {
                                     error!("RPC channel closed");
                                     return false;
                                 }
                             };
-                            
+
                             info!("Tool execution result: {:?}", result_json);
                             debug!("[MCP RESULT] {:?}", result_json);
 
-                            // Format result content. 
+                            // Format result content.
                             // The device returns { content: [{type:text, text: "..."}], isError: false }
                             // We need to extract the text content to feed back to LLM.
                             let mut tool_output = String::new();
-                            if let Some(content_array) = result_json.get("content").and_then(|v| v.as_array()) {
+                            if let Some(content_array) =
+                                result_json.get("content").and_then(|v| v.as_array())
+                            {
                                 for c in content_array {
                                     if let Some(t) = c.get("text").and_then(|v| v.as_str()) {
                                         tool_output.push_str(t);
@@ -438,7 +462,11 @@ async fn trigger_tts_only(state: &AppState, tx: &Sender<Message>, text: &str) {
     };
     if !send_message_safe(
         tx,
-        Message::Text(serde_json::to_string(&tts_start).expect("Serialize failed").into()),
+        Message::Text(
+            serde_json::to_string(&tts_start)
+                .expect("Serialize failed")
+                .into(),
+        ),
     )
     .await
     {
@@ -451,7 +479,11 @@ async fn trigger_tts_only(state: &AppState, tx: &Sender<Message>, text: &str) {
     };
     if !send_message_safe(
         tx,
-        Message::Text(serde_json::to_string(&tts_sentence).expect("Serialize failed").into()),
+        Message::Text(
+            serde_json::to_string(&tts_sentence)
+                .expect("Serialize failed")
+                .into(),
+        ),
     )
     .await
     {
@@ -496,7 +528,11 @@ async fn trigger_tts_only(state: &AppState, tx: &Sender<Message>, text: &str) {
     };
     let _ = send_message_safe(
         tx,
-        Message::Text(serde_json::to_string(&tts_stop).expect("Serialize failed").into()),
+        Message::Text(
+            serde_json::to_string(&tts_stop)
+                .expect("Serialize failed")
+                .into(),
+        ),
     )
     .await;
 }
@@ -541,7 +577,7 @@ enum McpState {
 // Function to handle MCP handshake in a separate task
 async fn handle_mcp_handshake_task(tx: Sender<Message>, mcp_tx: Sender<McpToolsEvent>) {
     info!("Starting MCP handshake task...");
-    
+
     // 1. Send Initialize
     let id_init = 1;
     let params = McpInitializeParams {
@@ -550,38 +586,49 @@ async fn handle_mcp_handshake_task(tx: Sender<Message>, mcp_tx: Sender<McpToolsE
         client_info: ClientInfo {
             name: "XiaoZhi Server".to_string(),
             version: "1.0.0".to_string(),
-        }
+        },
     };
-    let req_init = create_request("initialize", Some(serde_json::to_value(params).unwrap()), Some(json!(id_init)));
+    let req_init = create_request(
+        "initialize",
+        Some(serde_json::to_value(params).unwrap()),
+        Some(json!(id_init)),
+    );
     let mcp_msg_init = ServerMessage::Mcp {
         payload: serde_json::to_value(req_init).unwrap(),
         session_id: None,
     };
-    
+
     debug!("Sending MCP Initialize request...");
-    if !send_nowait(&tx, Message::Text(serde_json::to_string(&mcp_msg_init).expect("Serialize failed").into())) {
+    if !send_nowait(
+        &tx,
+        Message::Text(
+            serde_json::to_string(&mcp_msg_init)
+                .expect("Serialize failed")
+                .into(),
+        ),
+    ) {
         warn!("Failed to send MCP Initialize request");
         return;
     }
 
     // Note: We are not blocking here to wait for response. The main loop receives the response.
     // However, to strictly sequence "Initialize -> Tools/List", we usually need to wait.
-    // But since the main loop handles *all* incoming messages, we can't easily "wait" here for a specific message 
+    // But since the main loop handles *all* incoming messages, we can't easily "wait" here for a specific message
     // without complicated channel wiring for *every* response.
-    
+
     // Instead, the main loop should trigger the next step.
     // BUT, the requirement is "This should be a new thread... subsequent operations are not necessarily locked".
-    
+
     // If we want this task to manage the flow, we need a way to receive specific MCP responses.
     // Current architecture: Main loop receives ALL WS messages.
-    // Refined approach: 
+    // Refined approach:
     // Main loop sees "Hello" -> Spawns this task? No, main loop should just send Init.
     // Main loop sees "Init Response" -> Sends "Tools/List".
     // Main loop sees "Tools List Response" -> Updates state.
-    
+
     // The user suggestion: "When you receive MCP spec... you are the initiator... This should be a new thread... and you must remember not to get stuck in select."
     // If I spawn a thread that *sends* commands, that's fine. But *receiving* the response still happens in the main loop.
-    
+
     // Let's stick to the Event-Driven approach in the main loop for handshake steps, as it is non-blocking by design.
     // I will improve the state machine in the main loop to be more explicit about these steps.
 }
@@ -649,7 +696,8 @@ async fn handle_socket_inner(
     });
 
     // Channel for logic task to receive text (and now current tools)
-    let (llm_tx, mut llm_rx) = tokio::sync::mpsc::channel::<(String, Option<Vec<ToolDefinition>>)>(16);
+    let (llm_tx, mut llm_rx) =
+        tokio::sync::mpsc::channel::<(String, Option<Vec<ToolDefinition>>)>(16);
     let (control_tx, control_rx) = tokio::sync::mpsc::channel::<ControlMessage>(16);
     // Channel for logic task to request RPC calls from main loop
     let (rpc_tx, rpc_rx) = tokio::sync::mpsc::channel::<RpcCall>(16);
@@ -664,7 +712,15 @@ async fn handle_socket_inner(
 
     tokio::spawn(async move {
         while let Some((text, tools)) = llm_rx.recv().await {
-            let should_sleep = process_text_logic(&state_clone, &tx_clone, &text, &dev_id, tools, &rpc_tx_clone).await;
+            let should_sleep = process_text_logic(
+                &state_clone,
+                &tx_clone,
+                &text,
+                &dev_id,
+                tools,
+                &rpc_tx_clone,
+            )
+            .await;
             if should_sleep {
                 let _ = control_tx_llm.send(ControlMessage::Sleep).await;
             } else {
@@ -696,7 +752,8 @@ async fn handle_socket_inner(
     // MCP State
     let mut mcp_state = McpState::Disabled;
     let mut mcp_request_id_counter = 1;
-    let mut pending_mcp_requests: HashMap<i64, oneshot::Sender<Result<Value, String>>> = HashMap::new();
+    let mut pending_mcp_requests: HashMap<i64, oneshot::Sender<Result<Value, String>>> =
+        HashMap::new();
     let mut mcp_tools: Vec<McpTool> = Vec::new();
 
     loop {
@@ -739,13 +796,13 @@ async fn handle_socket_inner(
                                                              if feats.get("mcp").and_then(|v| v.as_bool()).unwrap_or(false) {
                                                                  info!("Client supports MCP. Initializing handshake in background...");
                                                                  mcp_state = McpState::Initializing;
-                                                                 
+
                                                                  // Spawn a task to handle the handshake initiation (non-blocking)
                                                                  // Actually, we can just send the first message here.
                                                                  // The logic needs to be state-driven in the loop.
                                                                  let id = mcp_request_id_counter;
                                                                  mcp_request_id_counter += 1;
-                                                                 
+
                                                                  let params = McpInitializeParams {
                                                                      capabilities: json!({}),
                                                                      protocol_version: "2024-11-05".to_string(),
@@ -821,17 +878,17 @@ async fn handle_socket_inner(
                                                                              // We assume this is the response to "initialize"
                                                                              // (In a robust implementation we would track the ID, but for this linear handshake, simple state checks suffice)
                                                                              info!("Received MCP Initialize response. Fetching tools list...");
-                                                                             
+
                                                                              // Send tools/list
                                                                              let id = mcp_request_id_counter;
                                                                              mcp_request_id_counter += 1;
                                                                              let req = create_request("tools/list", Some(json!({ "cursor": "" })), Some(json!(id)));
-                                                                 let mcp_msg = ServerMessage::Mcp { 
+                                                                 let mcp_msg = ServerMessage::Mcp {
                                                                      payload: serde_json::to_value(req).unwrap(),
                                                                      session_id: Some(current_session_id.clone()),
                                                                  };
                                                                              send_nowait(&tx, Message::Text(serde_json::to_string(&mcp_msg).expect("Serialize failed").into()));
-                                                                             
+
                                                                              mcp_state = McpState::Ready; // Transition to Ready state, expecting tools list next
                                                                          } else if mcp_state == McpState::Ready {
                                                                              // We assume this is the response to "tools/list"
@@ -894,7 +951,7 @@ async fn handle_socket_inner(
                                 if !accumulated_text.trim().is_empty() {
                                     info!("STT NoSpeech. Triggering LLM.");
                                     state_enum = SessionState::Processing;
-                                    
+
                                     // Convert MCP tools
                                     let tool_defs: Option<Vec<ToolDefinition>> = if !mcp_tools.is_empty() {
                                         debug!("Passing {} tools to LLM logic.", mcp_tools.len());
@@ -907,7 +964,7 @@ async fn handle_socket_inner(
                                         debug!("No tools to pass to LLM logic.");
                                         None
                                     };
-                                    
+
                                     let _ = llm_tx.send((accumulated_text.clone(), tool_defs)).await;
                                     accumulated_text.clear();
                                 }
@@ -933,13 +990,13 @@ async fn handle_socket_inner(
                         info!("Executing MCP RPC: {}", call.method);
                         let id = mcp_request_id_counter;
                         mcp_request_id_counter += 1;
-                        
+
                         let req = create_request(&call.method, Some(call.params), Some(json!(id)));
-                        let mcp_msg = ServerMessage::Mcp { 
+                        let mcp_msg = ServerMessage::Mcp {
                             payload: serde_json::to_value(req).unwrap(),
                             session_id: Some(current_session_id.clone()),
                         };
-                        
+
                         if send_nowait(&tx, Message::Text(serde_json::to_string(&mcp_msg).expect("Serialize failed").into())) {
                             pending_mcp_requests.insert(id, call.resp_tx);
                         } else {

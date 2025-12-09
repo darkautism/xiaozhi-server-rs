@@ -70,9 +70,7 @@ impl DbTrait for InMemoryDb {
         content: &str,
     ) -> anyhow::Result<()> {
         let mut history_db = self.chat_history.write().unwrap();
-        let history = history_db
-            .entry(device_id.to_string())
-            .or_default();
+        let history = history_db.entry(device_id.to_string()).or_default();
         history.push(Message {
             role: role.to_string(),
             content: content.to_string(),

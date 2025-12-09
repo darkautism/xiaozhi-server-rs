@@ -129,10 +129,7 @@ impl SttTrait for SenseVoiceStt {
                                         }
                                     }
                                 },
-                                Err(e) => Err(anyhow::anyhow!(
-                                    "SenseVoice Stream Error: {}",
-                                    e
-                                )),
+                                Err(e) => Err(anyhow::anyhow!("SenseVoice Stream Error: {}", e)),
                             };
 
                             if tx.send(event).await.is_err() {

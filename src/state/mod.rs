@@ -68,7 +68,7 @@ impl AppState {
                         openai_conf.base_url.clone(),
                     ))
                 } else {
-                     panic!("OpenAI provider selected but [llm.openai] config missing.");
+                    panic!("OpenAI provider selected but [llm.openai] config missing.");
                 }
             }
             "ollama" => {
@@ -115,10 +115,10 @@ impl AppState {
                         .clone()
                         .or_else(|| {
                             // Try to get key from llm.gemini if available
-                             config.llm.gemini.as_ref().map(|g| g.api_key.clone())
+                            config.llm.gemini.as_ref().map(|g| g.api_key.clone())
                         })
                         .expect("Gemini TTS requires an API key in [tts.gemini] or [llm.gemini]");
-                        
+
                     Arc::new(GeminiTts::new(
                         api_key,
                         gemini_config.model.clone(),
