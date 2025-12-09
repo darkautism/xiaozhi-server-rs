@@ -1,5 +1,5 @@
 use crate::services::llm::TECH_INSTRUCTION;
-use crate::traits::{LlmTrait, Message};
+use crate::traits::{ChatResponse, LlmTrait, Message, ToolDefinition};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -39,7 +39,11 @@ impl OllamaLlm {
 
 #[async_trait]
 impl LlmTrait for OllamaLlm {
-    async fn chat(&self, messages: Vec<Message>) -> Result<String> {
+    async fn chat(
+        &self,
+        messages: Vec<Message>,
+        tools: Option<Vec<ToolDefinition>>,
+    ) -> Result<ChatResponse> {
         let url = format!("{}/chat/completions", self.base_url);
 
         let mut request_messages = Vec::new();
@@ -54,19 +58,46 @@ impl LlmTrait for OllamaLlm {
 
         // Map internal messages to OpenAI/Ollama format
         for msg in messages {
-            request_messages.push(json!({
+            let mut json_msg = json!({
                 "role": msg.role,
                 "content": msg.content
-            }));
+            });
+             if !msg.tool_calls.is_empty() {
+                 json_msg["tool_calls"] = serde_json::to_value(&msg.tool_calls).unwrap();
+            }
+            if let Some(tool_call_id) = &msg.tool_call_id {
+                json_msg["tool_call_id"] = json!(tool_call_id);
+            }
+            request_messages.push(json_msg);
         }
 
-        let body = json!({
+        let mut body = json!({
             "model": self.model,
             "messages": request_messages,
             "stream": false 
         });
 
+        if let Some(tools) = tools {
+            if !tools.is_empty() {
+                let openai_tools: Vec<Value> = tools
+                    .iter()
+                    .map(|t| {
+                        json!({
+                            "type": "function",
+                            "function": {
+                                "name": t.name,
+                                "description": t.description,
+                                "parameters": t.parameters
+                            }
+                        })
+                    })
+                    .collect();
+                body["tools"] = json!(openai_tools);
+            }
+        }
+
         info!("Sending request to Ollama model: {} at {}", self.model, self.base_url);
+        tracing::debug!("[LLM DUMP] Request Body: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
         
         // Ollama doesn't typically require an API key
         let resp = self
@@ -90,11 +121,30 @@ impl LlmTrait for OllamaLlm {
             .await
             .context("Failed to parse Ollama response")?;
 
-        // Extract text from response structure: choices[0].message.content
-        let content = json["choices"][0]["message"]["content"]
-            .as_str()
-            .context("Invalid response format from Ollama")?;
+        tracing::debug!("[LLM DUMP] Response Body: {}", serde_json::to_string_pretty(&json).unwrap_or_default());
 
-        Ok(content.to_string())
+        let choice = &json["choices"][0];
+        let message = &choice["message"];
+
+        // Check for tool calls
+        if let Some(tool_calls_json) = message.get("tool_calls") {
+            if let Some(tool_calls_array) = tool_calls_json.as_array() {
+                 let mut calls = Vec::new();
+                 for tc in tool_calls_array {
+                     calls.push(serde_json::from_value(tc.clone())?);
+                 }
+                 if !calls.is_empty() {
+                     return Ok(ChatResponse::ToolCall(calls));
+                 }
+            }
+        }
+
+        // Extract text
+        let content = message["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        Ok(ChatResponse::Text(content))
     }
 }

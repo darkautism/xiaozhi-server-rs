@@ -22,7 +22,7 @@ system_instruction = "You are a smart speaker. Please force the use of Tradition
 
 [llm.gemini]
 api_key = "Key"
-model = "gemini-2.0-flash-lite"
+model = "gemini-2.5-flash-lite"
 
 # [llm.openai]
 # api_key = "sk-..."

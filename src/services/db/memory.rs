@@ -76,6 +76,8 @@ impl DbTrait for InMemoryDb {
         history.push(Message {
             role: role.to_string(),
             content: content.to_string(),
+            tool_calls: vec![],
+            tool_call_id: None,
         });
         Ok(())
     }

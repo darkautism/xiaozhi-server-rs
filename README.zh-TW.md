@@ -21,6 +21,7 @@
   - *Opus*: 測試用。
 - **OTA 更新:** 內建 OTA 伺服器，支援裝置韌體更新與啟用（Activation）流程。
 - **對話記憶:** 支援 In-Memory 或 SQLite 資料庫儲存對話歷史。
+- **MCPModel Context Protocol:** 支援小智MCP(尚未測試).
 
 ## 系統需求
 

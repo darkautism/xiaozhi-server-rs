@@ -23,6 +23,7 @@ This is a personal server-side implementation of the Xiaozhi bot, designed to pr
   - *Opus*: For testing.
 - **OTA Updates:** Built-in OTA server supporting device firmware updates and activation flows.
 - **Conversation Memory:** Supports storing conversation history in In-Memory or SQLite database.
+- **MCPModel Context Protocol:** Supports xiaozhi Model Context Protocol(Not test yet).
 
 ---
 

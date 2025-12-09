@@ -173,6 +173,8 @@ impl DbTrait for SqlDb {
             messages.push(Message {
                 role: row.get("role"),
                 content: row.get("content"),
+                tool_calls: vec![],
+                tool_call_id: None,
             });
         }
         Ok(messages)
